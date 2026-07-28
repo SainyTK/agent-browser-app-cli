@@ -11,10 +11,23 @@ export const readAuthStateScript = String.raw`
       return null;
     }
   };
+  const normalizeUsername = (value) => {
+    if (!value) return null;
+    const normalized = String(value)
+      .trim()
+      .replace(/^@/, "")
+      .replace(/^u\//i, "");
+    return /^[A-Za-z0-9_-]{3,20}$/.test(normalized)
+      ? normalized
+      : null;
+  };
+  const app = document.querySelector("shreddit-app");
   const candidates = [
     ...document.querySelectorAll(
       'header a[href^="/user/"], header a[href^="/u/"], ' +
       'reddit-header-large a[href^="/user/"], ' +
+      'reddit-header-action-items a[href^="/user/"], ' +
+      'faceplate-tracker[noun="profile"] a[href^="/user/"], ' +
       '[slot="user-drawer"] a[href^="/user/"], ' +
       'a[data-testid="profile-button"][href^="/user/"]'
     )
@@ -24,7 +37,37 @@ export const readAuthStateScript = String.raw`
     username = usernameFromHref(candidate.getAttribute("href"));
     if (username) break;
   }
-  const app = document.querySelector("shreddit-app");
+  const identityElements = [
+    app,
+    document.querySelector("reddit-header-action-items"),
+    document.querySelector("reddit-header-large"),
+    document.querySelector('[slot="user-drawer"]'),
+    document.querySelector('[data-testid="profile-button"]')
+  ].filter(Boolean);
+  const identityAttributes = [
+    "username",
+    "user-name",
+    "current-username",
+    "account-name"
+  ];
+  for (const element of identityElements) {
+    for (const attribute of identityAttributes) {
+      username = username ||
+        normalizeUsername(element.getAttribute(attribute));
+    }
+  }
+  const labeledIdentity = identityElements
+    .flatMap((element) => [
+      element.getAttribute("aria-label"),
+      element.getAttribute("title")
+    ])
+    .filter(Boolean)
+    .join(" ");
+  username = username ||
+    labeledIdentity.match(
+      /(?:u\/|profile\s+(?:for|of)\s+|account\s+)([A-Za-z0-9_-]{3,20})/i
+    )?.[1] ||
+    null;
   const appLoggedIn = ["is-user-logged-in", "user-logged-in", "logged-in"]
     .some((name) => {
       const value = app?.getAttribute(name);

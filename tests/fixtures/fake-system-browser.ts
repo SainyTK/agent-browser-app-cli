@@ -24,6 +24,7 @@ const donePath = process.env.FAKE_SYSTEM_BROWSER_DONE;
 if (!donePath) {
   throw new Error("FAKE_SYSTEM_BROWSER_DONE is required");
 }
+let targetPolls = 0;
 const server = Bun.serve({
   hostname: "127.0.0.1",
   port,
@@ -32,10 +33,22 @@ const server = Bun.serve({
       const reddit = process.argv
         .slice(2)
         .some((argument) => argument.startsWith("https://www.reddit.com/"));
+      targetPolls += 1;
       return Response.json([
         {
+          title:
+            reddit && targetPolls <= 2
+              ? "Reddit - Please wait for verification"
+              : reddit
+                ? "Reddit"
+                : "Home / X",
           type: "page",
-          url: reddit ? "https://www.reddit.com/" : "https://x.com/home",
+          url:
+            reddit && targetPolls <= 2
+              ? "https://www.reddit.com/?js_challenge=1"
+              : reddit
+                ? "https://www.reddit.com/"
+                : "https://x.com/home",
         },
       ]);
     }

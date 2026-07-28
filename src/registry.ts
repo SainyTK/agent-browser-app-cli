@@ -1,5 +1,13 @@
-import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { randomUUID } from "node:crypto";
+import {
+  access,
+  chmod,
+  mkdir,
+  readFile,
+  rename,
+  writeFile,
+} from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { CliError } from "./errors.ts";
 import type { AppPaths } from "./config.ts";
 
@@ -176,6 +184,27 @@ export class AccountRegistry {
     return account;
   }
 
+  async accountForDiscoveredLogin(): Promise<Account> {
+    await this.initialize();
+    let id: string;
+    let accountRoot: string;
+    do {
+      id = `login-${randomUUID().slice(0, 8)}`;
+      accountRoot = join(this.paths.accountsRoot, id);
+    } while (await pathExists(accountRoot));
+
+    const now = new Date().toISOString();
+    const account: Account = {
+      id,
+      profileDir: join(accountRoot, "browser-profile"),
+      stateFile: join(accountRoot, "state.json"),
+      createdAt: now,
+      updatedAt: now,
+    };
+    await mkdir(account.profileDir, { recursive: true, mode: 0o700 });
+    return account;
+  }
+
   async saveAuthenticated(
     account: Account,
     detectedIdentity?: string,
@@ -206,6 +235,65 @@ export class AccountRegistry {
     } else {
       registry.accounts.push(updated);
     }
+    registry.activeAccountId = updated.id;
+    await this.write(registry);
+    return updated;
+  }
+
+  async saveDiscoveredAuthenticated(
+    account: Account,
+    detectedIdentity: string,
+  ): Promise<Account> {
+    if (this.options.identityKind !== "handle") {
+      throw new CliError(
+        "Discovered account login requires a handle-based registry.",
+      );
+    }
+    const identity = normalizeSelector(detectedIdentity, "handle");
+    if (!identity) {
+      throw new CliError(
+        `Could not save ${this.options.appName} authentication without a detected username.`,
+      );
+    }
+
+    const registry = await this.read();
+    const retainedAccounts = registry.accounts.filter(
+      (candidate) =>
+        !candidate.identity ||
+        normalizeSelector(candidate.identity, "handle") !== identity,
+    );
+    const baseId = safeAccountId(identity);
+    let id = baseId;
+    let suffix = 2;
+    let accountRoot = join(this.paths.accountsRoot, id);
+    while (
+      retainedAccounts.some((candidate) => candidate.id === id) ||
+      await pathExists(accountRoot)
+    ) {
+      id = `${baseId}-${suffix}`;
+      suffix += 1;
+      accountRoot = join(this.paths.accountsRoot, id);
+    }
+
+    const currentRoot = dirname(account.profileDir);
+    await rename(currentRoot, accountRoot).catch((error) => {
+      throw new CliError(
+        `Could not stamp the authenticated ${this.options.appName} profile as "${id}". ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    });
+    const now = new Date().toISOString();
+    const updated: Account = {
+      ...account,
+      id,
+      identity,
+      profileDir: join(accountRoot, "browser-profile"),
+      stateFile: join(accountRoot, "state.json"),
+      updatedAt: now,
+      lastAuthenticatedAt: now,
+    };
+    registry.accounts = [...retainedAccounts, updated];
     registry.activeAccountId = updated.id;
     await this.write(registry);
     return updated;
@@ -252,5 +340,17 @@ export class AccountRegistry {
       { mode: 0o600 },
     );
     await chmod(this.paths.registryFile, 0o600).catch(() => undefined);
+  }
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return false;
+    }
+    throw error;
   }
 }

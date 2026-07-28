@@ -156,7 +156,7 @@ Usage:
   agent-browser-app x auth list [--json]
   agent-browser-app x feed [--limit <count>] [--account <handle-or-id>] [--headed] [--json]
   agent-browser-app x profile <url-or-id> [--account <handle-or-id>] [--headed] [--json]
-  agent-browser-app reddit auth login [--account <username>] [--timeout <seconds>] [--system-browser]
+  agent-browser-app reddit auth login [--timeout <seconds>] [--system-browser]
   agent-browser-app reddit auth list [--json]
   agent-browser-app reddit feed [--limit <count>] [--account <username-or-id>] [--headed] [--json]
   agent-browser-app reddit profile <url-or-username> [--account <username-or-id>] [--headed] [--json]
@@ -433,7 +433,7 @@ async function handleRedditAuth(
   if (command === "login") {
     assertAllowedOptions(
       options,
-      new Set(["account", "system-browser", "timeout"]),
+      new Set(["system-browser", "timeout"]),
     );
     if (options.positionals.length > 0) {
       throw new CliError(
@@ -441,17 +441,13 @@ async function handleRedditAuth(
         2,
       );
     }
-    const requestedAccount = stringOption(options, "account");
-    const account = await registry.accountForLogin(requestedAccount);
+    const account = await registry.accountForDiscoveredLogin();
     const timeoutSeconds = numberOption(options, "timeout", 600);
     const systemBrowser = hasFlag(options, "system-browser");
-    const label =
-      requestedAccount ||
-      (account.identity ? `u/${account.identity}` : account.id);
     console.log(
       `Opening ${
         systemBrowser ? "system Google Chrome" : "headed Chrome"
-      } for Reddit account "${label}".`,
+      } for Reddit sign-in.`,
     );
     const detectedUsername = systemBrowser
       ? await loginRedditWithSystemBrowser(
@@ -468,7 +464,7 @@ async function handleRedditAuth(
             "Complete Reddit sign-in in the browser window. This command will continue automatically.",
           );
         });
-    const saved = await registry.saveAuthenticated(
+    const saved = await registry.saveDiscoveredAuthenticated(
       account,
       detectedUsername,
     );

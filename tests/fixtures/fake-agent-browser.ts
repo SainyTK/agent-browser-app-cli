@@ -20,6 +20,7 @@ const statePath = (() => {
 interface FakeState {
   url: string;
   responsePolls: number;
+  redditAuthPolls: number;
   submitted: boolean;
   notebooks: Array<{
     id: string;
@@ -62,6 +63,7 @@ async function readState(): Promise<FakeState> {
   const defaults: FakeState = {
     url: "https://notebooklm.google.com/",
     responsePolls: 0,
+    redditAuthPolls: 0,
     submitted: false,
     notebooks,
     sources: ["Fixture Source A", "Fixture Source B"],
@@ -115,8 +117,9 @@ const rest = args.slice(index + 1);
 const state = await readState();
 
 if (command === "tab" && (!rest[0] || rest[0] === "list")) {
-  const reddit = args.includes("agent-browser-app-reddit-default") ||
-    args.includes("agent-browser-app-reddit-worktree-test");
+  const reddit = args.some((argument) =>
+    argument.startsWith("agent-browser-app-reddit-"),
+  );
   output({
     tabs: [
       {
@@ -151,12 +154,15 @@ if (command === "tab" && (!rest[0] || rest[0] === "list")) {
       },
     });
   } else if (script.includes("aba:reddit-auth-state")) {
+    state.redditAuthPolls += 1;
+    await saveState(state);
     output({
       result: {
-        authenticated: true,
+        authenticated: state.redditAuthPolls >= 2,
         loginRequired: false,
         blocked: false,
-        username: "fixture_redditor",
+        username:
+          state.redditAuthPolls >= 2 ? "fixture_redditor" : null,
         url: "https://www.reddit.com/",
       },
     });

@@ -154,14 +154,16 @@ export async function login(
   account: Account,
   timeoutSeconds: number,
   onWaiting: () => void,
-): Promise<string | undefined> {
+): Promise<string> {
   const browser = new AgentBrowser(account, "reddit");
   try {
     await browser.open(REDDIT_LOGIN_URL, true);
     onWaiting();
     const state = await waitUntil(
       () => browser.eval<AuthState>(readAuthStateScript),
-      (value) => value.authenticated || value.blocked,
+      (value) =>
+        (value.authenticated && Boolean(value.username)) ||
+        value.blocked,
       timeoutSeconds * 1000,
       1000,
     );
@@ -175,9 +177,14 @@ export async function login(
         `Reddit authentication did not finish within ${timeoutSeconds} seconds.`,
       );
     }
+    if (!state.username) {
+      throw new CliError(
+        `Reddit signed in, but the account username was not detected within ${timeoutSeconds} seconds. Keep the authenticated page open and retry.`,
+      );
+    }
     await delay(1000);
     await browser.saveState();
-    return state.username || undefined;
+    return state.username;
   } finally {
     await browser.close();
   }
@@ -187,7 +194,8 @@ export async function loginWithSystemBrowser(
   account: Account,
   timeoutSeconds: number,
   onWaiting: () => void,
-): Promise<string | undefined> {
+): Promise<string> {
+  const deadline = Date.now() + timeoutSeconds * 1000;
   await new AgentBrowser(account, "reddit").close();
   const systemBrowser = await startSystemBrowser(
     account,
@@ -218,14 +226,29 @@ export async function loginWithSystemBrowser(
       );
     }
     await browser.switchTab(redditTab.tabId);
-    const state = await browser.eval<AuthState>(readAuthStateScript);
+    const state = await waitUntil(
+      () => browser.eval<AuthState>(readAuthStateScript),
+      (value) =>
+        (value.authenticated && Boolean(value.username)) ||
+        value.blocked,
+      Math.max(deadline - Date.now(), 1_000),
+      500,
+    );
+    if (state.blocked) {
+      throw blockedError();
+    }
     if (!state.authenticated) {
       throw new CliError(
-        "Reddit left the login page, but the authenticated profile could not be detected.",
+        `Reddit left the login page, but the authenticated profile was not detected within ${timeoutSeconds} seconds.`,
+      );
+    }
+    if (!state.username) {
+      throw new CliError(
+        `Reddit signed in, but the account username was not detected within ${timeoutSeconds} seconds. Keep the authenticated page open and retry.`,
       );
     }
     await browser.saveState();
-    return state.username || undefined;
+    return state.username;
   } finally {
     await browser.close();
     await systemBrowser.close();

@@ -95,6 +95,9 @@ describe("agent-browser-app CLI", () => {
     expect(help.stdout).toContain("agent-browser-app x feed");
     expect(help.stdout).toContain("agent-browser-app x profile");
     expect(help.stdout).toContain("agent-browser-app reddit auth login");
+    expect(help.stdout).not.toContain(
+      "agent-browser-app reddit auth login [--account",
+    );
     expect(help.stdout).toContain("agent-browser-app reddit feed");
     expect(help.stdout).toContain("agent-browser-app reddit profile");
     expect(version.stdout.trim()).toBe(packageJson.version);
@@ -282,8 +285,9 @@ describe("agent-browser-app CLI", () => {
     const accounts = JSON.parse(accountsResult.stdout);
     expect(accounts.accounts).toHaveLength(1);
     expect(accounts.accounts[0].identity).toBe("fixture_redditor");
+    expect(accounts.accounts[0].id).toBe("fixture-redditor");
     expect(accounts.accounts[0].profileDir).toContain(
-      "/apps/agent-browser-app/reddit/",
+      "/apps/agent-browser-app/reddit/accounts/fixture-redditor/",
     );
 
     const accountsText = await runCli(
@@ -292,7 +296,7 @@ describe("agent-browser-app CLI", () => {
     );
     expect(accountsText.exitCode).toBe(0);
     expect(accountsText.stdout).toContain(
-      "* u/fixture_redditor [default]",
+      "* u/fixture_redditor [fixture-redditor]",
     );
 
     const feedResult = await runCli(
@@ -355,7 +359,9 @@ describe("agent-browser-app CLI", () => {
       .map((line) => JSON.parse(line) as string[]);
     expect(
       invocations.some((invocation) =>
-        invocation.includes("agent-browser-app-reddit-default"),
+        invocation.some((argument) =>
+          argument.startsWith("agent-browser-app-reddit-login-"),
+        ),
       ),
     ).toBe(true);
     expect(
@@ -412,6 +418,13 @@ describe("agent-browser-app CLI", () => {
     );
     expect(unknownOption.exitCode).toBe(2);
     expect(unknownOption.stderr).toContain("Unknown option");
+
+    const predeclaredAccount = await runCli(
+      ["reddit", "auth", "login", "--account", "forgotten-user"],
+      home,
+    );
+    expect(predeclaredAccount.exitCode).toBe(2);
+    expect(predeclaredAccount.stderr).toContain("Unknown option: --account");
   });
 
   test("bootstraps Reddit login in an isolated system browser", async () => {
@@ -424,8 +437,6 @@ describe("agent-browser-app CLI", () => {
         "reddit",
         "auth",
         "login",
-        "--account",
-        "worktree-test",
         "--system-browser",
         "--timeout",
         "2",
@@ -451,7 +462,7 @@ describe("agent-browser-app CLI", () => {
         argument.startsWith("--user-data-dir="),
       ),
     ).toContain(
-      "/apps/agent-browser-app/reddit/accounts/worktree-test/browser-profile",
+      "/apps/agent-browser-app/reddit/accounts/login-",
     );
     expect(browserArguments).toContain(
       "https://www.reddit.com/login/",
@@ -477,7 +488,9 @@ describe("agent-browser-app CLI", () => {
     expect(cdpInvocation).not.toContain("--headed");
     expect(
       invocations.some((invocation) =>
-        invocation.includes("agent-browser-app-reddit-worktree-test"),
+        invocation.some((argument) =>
+          argument.startsWith("agent-browser-app-reddit-login-"),
+        ),
       ),
     ).toBe(true);
   });

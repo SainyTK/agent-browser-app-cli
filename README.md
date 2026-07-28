@@ -34,7 +34,7 @@ Each application keeps its accounts separate while using both:
 `-- reddit/
     |-- accounts.json
     `-- accounts/
-        `-- default/
+        `-- username/
             |-- browser-profile/
             `-- state.json
 ```
@@ -291,12 +291,6 @@ This opens normal Google Chrome with an isolated Reddit profile.
 Complete sign-in and wait for an authenticated Reddit page.
 The CLI attaches agent-browser to that Chrome instance, saves `state.json`, and closes the isolated browser automatically.
 
-To add or refresh a specific account:
-
-```bash
-agent-browser-app reddit auth login --account username
-```
-
 List configured Reddit accounts:
 
 ```bash
@@ -305,6 +299,8 @@ agent-browser-app reddit auth list --json
 ```
 
 The most recently authenticated account is active.
+Reddit login detects the username from the authenticated browser and records it automatically.
+You do not need to know or provide the username before signing in.
 Reddit commands accept `--account <username-or-id>` when more than one account is configured.
 
 ## Reddit commands
