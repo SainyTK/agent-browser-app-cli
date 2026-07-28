@@ -11,7 +11,7 @@ import {
   login,
   readNotebook,
   removeSources,
-  uploadNotebook,
+  uploadNotebookFiles,
 } from "./apps/gnb/service.ts";
 
 const VERSION = "0.1.0";
@@ -94,8 +94,8 @@ Usage:
   agent-browser-app gnb notebook create [--account <email-or-id>] [--headed] [--json]
   agent-browser-app gnb notebook read <id-or-url> [--account <email-or-id>] [--headed] [--json]
   agent-browser-app gnb notebook ask <question> --id <id-or-url> [--account <email-or-id>] [--timeout <seconds>] [--headed] [--json]
-  agent-browser-app gnb notebook upload <path> --id <id-or-url> [--account <email-or-id>] [--timeout <seconds>] [--headed] [--json]
   agent-browser-app gnb notebook source list --id <id-or-url> [--account <email-or-id>] [--headed] [--json]
+  agent-browser-app gnb notebook source upload-files <path...> --id <id-or-url> [--account <email-or-id>] [--timeout <seconds>] [--headed] [--json]
   agent-browser-app gnb notebook source remove <source-id...> --id <id-or-url> [--account <email-or-id>] [--headed] [--json]
 
 Application aliases:
@@ -250,41 +250,6 @@ async function handleNotebook(
     return;
   }
 
-  if (command === "upload") {
-    const path = options.positionals[0];
-    const target =
-      stringOption(options, "id") || stringOption(options, "url");
-    if (!path) {
-      throw new CliError("notebook upload requires a file path.", 2);
-    }
-    if (!target) {
-      throw new CliError(
-        "notebook upload requires --id <notebook-id-or-url>.",
-        2,
-      );
-    }
-    const timeoutSeconds = numberOption(options, "timeout", 1800);
-    if (!json) {
-      console.log(
-        `Uploading ${path} and waiting for Gemini Notebook to finish processing...`,
-      );
-    }
-    const result = await uploadNotebook(
-      account,
-      target,
-      path,
-      headed,
-      timeoutSeconds,
-    );
-    if (json) {
-      printJson(result);
-    } else {
-      console.log(`Uploaded ${result.file}`);
-      console.log(result.url);
-    }
-    return;
-  }
-
   if (command === "source") {
     const sourceCommand = options.positionals[0];
     const target =
@@ -307,6 +272,37 @@ async function handleNotebook(
             `${source.id}\t${source.status}\t${source.title}`,
           );
         }
+      }
+      return;
+    }
+    if (sourceCommand === "upload-files") {
+      const paths = options.positionals.slice(1);
+      if (paths.length === 0) {
+        throw new CliError(
+          "notebook source upload-files requires at least one file path.",
+          2,
+        );
+      }
+      const timeoutSeconds = numberOption(options, "timeout", 1800);
+      if (!json) {
+        console.log(
+          `Uploading ${paths.length} file(s) and waiting for Gemini Notebook to finish processing...`,
+        );
+      }
+      const result = await uploadNotebookFiles(
+        account,
+        target,
+        paths,
+        headed,
+        timeoutSeconds,
+      );
+      if (json) {
+        printJson(result);
+      } else {
+        for (const file of result.files) {
+          console.log(`Uploaded ${file.file}`);
+        }
+        console.log(result.url);
       }
       return;
     }

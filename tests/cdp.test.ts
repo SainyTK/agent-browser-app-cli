@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { uploadThroughFileChooser } from "../src/cdp.ts";
 
-test("uploads a file through an intercepted Chrome file chooser", async () => {
+test("uploads multiple files through an intercepted Chrome file chooser", async () => {
   let browserSocket: import("bun").ServerWebSocket<unknown> | undefined;
   let uploadedFiles: string[] = [];
   const server = Bun.serve({
@@ -54,19 +54,22 @@ test("uploads a file through an intercepted Chrome file chooser", async () => {
     await uploadThroughFileChooser(
       `ws://127.0.0.1:${server.port}`,
       "https://notebooklm.google.com/notebook/test-id",
-      "/tmp/source.m4a",
+      ["/tmp/source-a.m4a", "/tmp/source-b.pdf"],
       async () => {
         expect(browserSocket).toBeDefined();
         browserSocket?.send(
           JSON.stringify({
             method: "Page.fileChooserOpened",
-            params: { backendNodeId: 42, mode: "selectSingle" },
+            params: { backendNodeId: 42, mode: "selectMultiple" },
             sessionId: "session-1",
           }),
         );
       },
     );
-    expect(uploadedFiles).toEqual(["/tmp/source.m4a"]);
+    expect(uploadedFiles).toEqual([
+      "/tmp/source-a.m4a",
+      "/tmp/source-b.pdf",
+    ]);
   } finally {
     server.stop(true);
   }

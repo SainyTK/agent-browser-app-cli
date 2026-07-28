@@ -105,14 +105,18 @@ agent-browser-app gnb notebook ask "What are the main findings?" \
 
 Use `--timeout <seconds>` to override the answer wait.
 
-Upload a local file as a source:
+Upload one or more local files as sources:
 
 ```bash
-agent-browser-app gnb notebook upload "/path/to/source.m4a" \
+agent-browser-app gnb notebook source upload-files \
+  "/path/to/source-a.m4a" \
+  "/path/to/source-b.pdf" \
   --id "notebook-id-or-url"
 ```
 
-The command stays open until the newly added source is ready for queries.
+All paths are validated before the browser opens.
+The command uses one file chooser and stays open until every newly added source is ready for queries.
+Files in the same call must have unique filenames.
 Use `--timeout <seconds>` to override the 30-minute processing timeout.
 
 List sources and their current IDs:

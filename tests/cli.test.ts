@@ -54,9 +54,14 @@ describe("agent-browser-app CLI", () => {
 
     expect(help.exitCode).toBe(0);
     expect(help.stdout).toContain("agent-browser-app gnb auth login");
-    expect(help.stdout).toContain("agent-browser-app gnb notebook upload");
     expect(help.stdout).toContain(
       "agent-browser-app gnb notebook source list",
+    );
+    expect(help.stdout).toContain(
+      "agent-browser-app gnb notebook source upload-files",
+    );
+    expect(help.stdout).not.toContain(
+      "agent-browser-app gnb notebook upload",
     );
     expect(help.stdout).toContain(
       "agent-browser-app gnb notebook source remove",
@@ -161,8 +166,10 @@ describe("agent-browser-app CLI", () => {
       [
         "gnb",
         "notebook",
-        "upload",
-        "/does/not/exist.m4a",
+        "source",
+        "upload-files",
+        "/does/not/exist-a.m4a",
+        "/does/not/exist-b.pdf",
         "--id",
         "abc-123",
       ],
@@ -170,6 +177,22 @@ describe("agent-browser-app CLI", () => {
     );
     expect(missingUpload.exitCode).toBe(1);
     expect(missingUpload.stderr).toContain("Could not read upload file");
+
+    const removedUploadCommand = await runCli(
+      [
+        "gnb",
+        "notebook",
+        "upload",
+        "/does/not/exist.m4a",
+        "--id",
+        "abc-123",
+      ],
+      home,
+    );
+    expect(removedUploadCommand.exitCode).toBe(2);
+    expect(removedUploadCommand.stderr).toContain(
+      "Unknown notebook command: upload",
+    );
 
     const completedInvocations = (await readFile(
       join(home, "fake-invocations.jsonl"),
@@ -220,6 +243,39 @@ describe("agent-browser-app CLI", () => {
       ),
     ).toEqual(["source-1", "source-2"]);
 
+    const invalidRemoval = await runCli(
+      [
+        "gnb",
+        "notebook",
+        "source",
+        "remove",
+        "source-1",
+        "source-99",
+        "--id",
+        "abc-123",
+      ],
+      home,
+    );
+    expect(invalidRemoval.exitCode).toBe(1);
+    expect(invalidRemoval.stderr).toContain(
+      'Unknown source ID "source-99"',
+    );
+
+    const unchanged = await runCli(
+      [
+        "gnb",
+        "notebook",
+        "source",
+        "list",
+        "--id",
+        "abc-123",
+        "--json",
+      ],
+      home,
+    );
+    expect(unchanged.exitCode).toBe(0);
+    expect(JSON.parse(unchanged.stdout).sources).toHaveLength(2);
+
     const removed = await runCli(
       [
         "gnb",
@@ -255,5 +311,5 @@ describe("agent-browser-app CLI", () => {
     );
     expect(after.exitCode).toBe(0);
     expect(JSON.parse(after.stdout).sources).toEqual([]);
-  }, 35_000);
+  }, 45_000);
 });

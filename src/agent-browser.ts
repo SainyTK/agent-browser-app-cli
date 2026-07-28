@@ -64,13 +64,13 @@ export class AgentBrowser {
     await this.runJson(["press", key]);
   }
 
-  async uploadThroughFileChooser(
+  async uploadFilesThroughFileChooser(
     triggerSelector: string,
-    filePath: string,
+    filePaths: string[],
   ): Promise<void> {
     const cdp = await this.runJson<{ cdpUrl: string }>(["get", "cdp-url"]);
     const pageUrl = await this.currentUrl();
-    await uploadThroughFileChooser(cdp.cdpUrl, pageUrl, filePath, () =>
+    await uploadThroughFileChooser(cdp.cdpUrl, pageUrl, filePaths, () =>
       this.click(triggerSelector),
     );
   }

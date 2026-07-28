@@ -433,13 +433,18 @@ export const markRemoveSourceMenuItemScript = String.raw`
       style.visibility !== "hidden" && style.display !== "none";
   };
   const target = Array.from(
-    document.querySelectorAll('[role="menuitem"], button')
+    document.querySelectorAll(
+      ".more-menu-delete-source-button, [role=menuitem], button"
+    )
   ).find((element) => {
     const label = [
       element.getAttribute("aria-label"),
       element.textContent
     ].filter(Boolean).join(" ").trim();
-    return visible(element) && /^(remove|delete)\s+source$/i.test(label);
+    return visible(element) && (
+      element.matches(".more-menu-delete-source-button") ||
+      /\b(remove|delete)\s+source\b/i.test(label)
+    );
   });
   if (!target) return false;
   target.setAttribute("data-agent-browser-app-target", "remove-source");
