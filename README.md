@@ -4,9 +4,10 @@
 It is also installed as `aba`, a shorter alias that supports the same commands and options.
 It delegates browser work to [agent-browser](https://github.com/vercel-labs/agent-browser) and keeps the underlying browser available for inspection when authentication requires a real user.
 
-The included application adapters are Gemini Notebook, formerly NotebookLM, and X, formerly Twitter.
+The included application adapters are Gemini Notebook, formerly NotebookLM, X, formerly Twitter, and Reddit.
 Gemini Notebook accepts `gnb`, `gemini-notebook`, and `notebooklm`.
 X accepts `x` and `twitter`.
+Reddit accepts `reddit`.
 
 ## Why this exists
 
@@ -24,7 +25,13 @@ Each application keeps its accounts separate while using both:
 |       `-- default/
 |           |-- browser-profile/
 |           `-- state.json
-`-- x/
+|-- x/
+|   |-- accounts.json
+|   `-- accounts/
+|       `-- default/
+|           |-- browser-profile/
+|           `-- state.json
+`-- reddit/
     |-- accounts.json
     `-- accounts/
         `-- default/
@@ -264,6 +271,74 @@ X workflows stay browser-driven.
 The adapter reads semantic HTML, schema.org metadata, accessible labels, and visible client-side elements from the rendered page.
 It does not call private X APIs.
 
+## Reddit authentication
+
+Start a headed Chrome session and complete Reddit sign-in:
+
+```bash
+agent-browser-app reddit auth login
+```
+
+The CLI opens Reddit's browser login page, waits for an authenticated page, saves the resulting agent-browser storage state, and records the detected username.
+Reddit may present an automated-traffic verification page to software-controlled Chrome.
+Use the system-browser bootstrap when that happens:
+
+```bash
+agent-browser-app reddit auth login --system-browser
+```
+
+This opens normal Google Chrome with an isolated Reddit profile.
+Complete sign-in and wait for an authenticated Reddit page.
+The CLI attaches agent-browser to that Chrome instance, saves `state.json`, and closes the isolated browser automatically.
+
+To add or refresh a specific account:
+
+```bash
+agent-browser-app reddit auth login --account username
+```
+
+List configured Reddit accounts:
+
+```bash
+agent-browser-app reddit auth list
+agent-browser-app reddit auth list --json
+```
+
+The most recently authenticated account is active.
+Reddit commands accept `--account <username-or-id>` when more than one account is configured.
+
+## Reddit commands
+
+Read posts from the authenticated home feed:
+
+```bash
+agent-browser-app reddit feed
+agent-browser-app reddit feed --limit 10
+agent-browser-app reddit feed --limit 10 --json
+```
+
+The default limit is 20.
+The adapter accumulates posts while scrolling the browser-rendered home feed and stops at the requested limit or when no additional posts load.
+Post output includes the post ID and URL, subreddit, author, title and text, creation time, outbound content URL, score, comment count, and content labels when Reddit exposes them.
+
+Read a Reddit profile by username or profile URL:
+
+```bash
+agent-browser-app reddit profile spez
+agent-browser-app reddit profile u/spez
+agent-browser-app reddit profile https://www.reddit.com/user/spez/ --json
+```
+
+Profile URLs from the current, old, new, mobile, and non-participation Reddit hosts are accepted and normalized to `www.reddit.com`.
+Profile output includes the account ID when exposed, username, display name, bio, creation time, available karma counts, follower count, and public admin or moderator labels.
+
+Use `--headed` on `feed` or `profile` when debugging a Reddit interface change.
+Use `--json` for machine-readable output.
+
+Reddit workflows stay browser-driven.
+The adapter reads semantic HTML, custom-element attributes, accessibility labels, and visible client-side elements from the rendered page.
+It does not call private Reddit APIs.
+
 ## Development
 
 ```bash
@@ -298,8 +373,12 @@ aba x auth login
 aba x auth list
 aba x feed --limit 5
 aba x profile OpenAI
+aba reddit auth login --system-browser
+aba reddit auth list
+aba reddit feed --limit 5
+aba reddit profile spez
 ```
 
-Gemini Notebook and X are external applications without public browser-automation contracts.
+Gemini Notebook, X, and Reddit are external applications without public browser-automation contracts.
 The adapters favor semantic metadata, accessibility labels, and URL semantics, then fall back to known component selectors.
 If an interface changes, rerun the failed command with `--headed` and update the scripts under the corresponding `src/apps/<app>/` directory.

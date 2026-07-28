@@ -115,15 +115,17 @@ const rest = args.slice(index + 1);
 const state = await readState();
 
 if (command === "tab" && (!rest[0] || rest[0] === "list")) {
+  const reddit = args.includes("agent-browser-app-reddit-default") ||
+    args.includes("agent-browser-app-reddit-worktree-test");
   output({
     tabs: [
       {
         active: true,
         label: null,
         tabId: "t1",
-        title: "Home / X",
+        title: reddit ? "Reddit" : "Home / X",
         type: "page",
-        url: "https://x.com/home",
+        url: reddit ? "https://www.reddit.com/" : "https://x.com/home",
       },
     ],
   });
@@ -146,6 +148,108 @@ if (command === "tab" && (!rest[0] || rest[0] === "list")) {
         googleRejected: false,
         username: "fixture_user",
         url: "https://x.com/home",
+      },
+    });
+  } else if (script.includes("aba:reddit-auth-state")) {
+    output({
+      result: {
+        authenticated: true,
+        loginRequired: false,
+        blocked: false,
+        username: "fixture_redditor",
+        url: "https://www.reddit.com/",
+      },
+    });
+  } else if (script.includes("aba:reddit-feed-scroll")) {
+    output({ result: { before: 0, after: 600 } });
+  } else if (script.includes("aba:reddit-feed")) {
+    output({
+      result: {
+        loginRequired: false,
+        blocked: false,
+        ready: true,
+        posts: [
+          {
+            id: "1abcde",
+            url: "https://www.reddit.com/r/agentbrowser/comments/1abcde/first_fixture_post/",
+            subreddit: "agentbrowser",
+            author: {
+              username: "first_redditor",
+            },
+            title: "First fixture post",
+            text: "Fixture body",
+            createdAt: "2026-07-28T01:00:00.000Z",
+            contentUrl: null,
+            metrics: {
+              score: 42,
+              comments: 7,
+            },
+            nsfw: false,
+            spoiler: false,
+            promoted: false,
+          },
+          {
+            id: "1fghij",
+            url: "https://www.reddit.com/r/typescript/comments/1fghij/second_fixture_post/",
+            subreddit: "typescript",
+            author: {
+              username: "second_redditor",
+            },
+            title: "Second fixture post",
+            text: "",
+            createdAt: null,
+            contentUrl: "https://example.com/article",
+            metrics: {
+              score: 13,
+              comments: 2,
+            },
+            nsfw: false,
+            spoiler: true,
+            promoted: false,
+          },
+          {
+            id: "1klmno",
+            url: "https://www.reddit.com/r/bun/comments/1klmno/third_fixture_post/",
+            subreddit: "bun",
+            author: {
+              username: "third_redditor",
+            },
+            title: "Third fixture post",
+            text: "",
+            createdAt: null,
+            contentUrl: null,
+            metrics: {
+              score: null,
+              comments: null,
+            },
+            nsfw: false,
+            spoiler: false,
+            promoted: false,
+          },
+        ],
+      },
+    });
+  } else if (script.includes("aba:reddit-profile")) {
+    output({
+      result: {
+        loginRequired: false,
+        blocked: false,
+        unavailableMessage: null,
+        ready: true,
+        profile: {
+          id: "t2_fixture",
+          username: "spez",
+          name: "spez",
+          bio: "Fixture Reddit profile",
+          createdAt: "2005-06-23T00:00:00.000Z",
+          karma: 123456,
+          postKarma: 100000,
+          commentKarma: 23456,
+          followers: 99,
+          admin: true,
+          moderator: false,
+          url: "https://www.reddit.com/user/spez/",
+        },
       },
     });
   } else if (script.includes("aba:x-feed-scroll")) {

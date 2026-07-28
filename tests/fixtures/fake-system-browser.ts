@@ -29,10 +29,13 @@ const server = Bun.serve({
   port,
   fetch(request) {
     if (new URL(request.url).pathname === "/json/list") {
+      const reddit = process.argv
+        .slice(2)
+        .some((argument) => argument.startsWith("https://www.reddit.com/"));
       return Response.json([
         {
           type: "page",
-          url: "https://x.com/home",
+          url: reddit ? "https://www.reddit.com/" : "https://x.com/home",
         },
       ]);
     }

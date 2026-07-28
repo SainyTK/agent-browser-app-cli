@@ -22,6 +22,13 @@ import {
   readProfile,
   resolveProfileUrl,
 } from "./apps/x/service.ts";
+import {
+  login as loginReddit,
+  loginWithSystemBrowser as loginRedditWithSystemBrowser,
+  readFeed as readRedditFeed,
+  readProfile as readRedditProfile,
+  resolveProfileUrl as resolveRedditProfileUrl,
+} from "./apps/reddit/service.ts";
 
 declare const AGENT_BROWSER_APP_BUILD_VERSION: string | undefined;
 
@@ -30,6 +37,7 @@ const VERSION =
     ? AGENT_BROWSER_APP_BUILD_VERSION
     : packageMetadata.version;
 const GNB_ALIASES = new Set(["gnb", "gemini-notebook", "notebooklm"]);
+const REDDIT_ALIASES = new Set(["reddit"]);
 
 interface ParsedOptions {
   values: Map<string, string | boolean>;
@@ -148,13 +156,18 @@ Usage:
   agent-browser-app x auth list [--json]
   agent-browser-app x feed [--limit <count>] [--account <handle-or-id>] [--headed] [--json]
   agent-browser-app x profile <url-or-id> [--account <handle-or-id>] [--headed] [--json]
+  agent-browser-app reddit auth login [--account <username>] [--timeout <seconds>] [--system-browser]
+  agent-browser-app reddit auth list [--json]
+  agent-browser-app reddit feed [--limit <count>] [--account <username-or-id>] [--headed] [--json]
+  agent-browser-app reddit profile <url-or-username> [--account <username-or-id>] [--headed] [--json]
 
 Executable aliases:
   agent-browser-app, aba
 
 Application aliases:
   Gemini Notebook: gnb, gemini-notebook, notebooklm
-  X: x, twitter`;
+  X: x, twitter
+  Reddit: reddit`;
 }
 
 async function handleGnbAuth(
@@ -410,6 +423,238 @@ async function handleXProfile(
   console.log(`Protected: ${profile.protected ? "yes" : "no"}`);
 }
 
+async function handleRedditAuth(
+  registry: AccountRegistry,
+  args: string[],
+): Promise<void> {
+  const command = args[0];
+  const options = parseOptions(args.slice(1));
+
+  if (command === "login") {
+    assertAllowedOptions(
+      options,
+      new Set(["account", "system-browser", "timeout"]),
+    );
+    if (options.positionals.length > 0) {
+      throw new CliError(
+        "reddit auth login does not accept positional arguments.",
+        2,
+      );
+    }
+    const requestedAccount = stringOption(options, "account");
+    const account = await registry.accountForLogin(requestedAccount);
+    const timeoutSeconds = numberOption(options, "timeout", 600);
+    const systemBrowser = hasFlag(options, "system-browser");
+    const label =
+      requestedAccount ||
+      (account.identity ? `u/${account.identity}` : account.id);
+    console.log(
+      `Opening ${
+        systemBrowser ? "system Google Chrome" : "headed Chrome"
+      } for Reddit account "${label}".`,
+    );
+    const detectedUsername = systemBrowser
+      ? await loginRedditWithSystemBrowser(
+          account,
+          timeoutSeconds,
+          () => {
+            console.log(
+              "Complete Reddit sign-in in the isolated Chrome window and wait for an authenticated Reddit page. This command will capture the login and close the isolated browser automatically.",
+            );
+          },
+        )
+      : await loginReddit(account, timeoutSeconds, () => {
+          console.log(
+            "Complete Reddit sign-in in the browser window. This command will continue automatically.",
+          );
+        });
+    const saved = await registry.saveAuthenticated(
+      account,
+      detectedUsername,
+    );
+    console.log(
+      `Authentication saved for ${
+        saved.identity ? `u/${saved.identity}` : saved.id
+      }.`,
+    );
+    console.log(`Profile: ${saved.profileDir}`);
+    console.log(`State: ${saved.stateFile}`);
+    return;
+  }
+
+  if (command === "list") {
+    assertAllowedOptions(options, new Set(["json"]));
+    if (options.positionals.length > 0) {
+      throw new CliError(
+        "reddit auth list does not accept positional arguments.",
+        2,
+      );
+    }
+    const result = await registry.list();
+    if (hasFlag(options, "json")) {
+      printJson(result);
+      return;
+    }
+    if (result.accounts.length === 0) {
+      console.log("No Reddit accounts configured.");
+      console.log("Run: agent-browser-app reddit auth login");
+      return;
+    }
+    for (const account of result.accounts) {
+      const active = account.id === result.activeAccountId ? "*" : " ";
+      console.log(
+        `${active} ${
+          account.identity
+            ? `u/${account.identity}`
+            : "(username not detected)"
+        } [${account.id}]`,
+      );
+    }
+    return;
+  }
+
+  throw new CliError(
+    `Unknown Reddit auth command: ${command || "(missing)"}`,
+    2,
+  );
+}
+
+function printRedditPost(
+  post: Awaited<ReturnType<typeof readRedditFeed>>[number],
+): void {
+  console.log(`${post.title || "(untitled)"} (r/${post.subreddit})`);
+  console.log(`u/${post.author.username}`);
+  console.log(`ID: ${post.id}`);
+  if (post.createdAt) {
+    console.log(post.createdAt);
+  }
+  if (post.text) {
+    console.log(post.text);
+  }
+  console.log(post.url);
+  if (post.contentUrl) {
+    console.log(`Content: ${post.contentUrl}`);
+  }
+  const metrics = [
+    ["score", post.metrics.score],
+    ["comments", post.metrics.comments],
+  ]
+    .filter((entry): entry is [string, number] => entry[1] !== null)
+    .map(([name, value]) => `${name}=${value}`)
+    .join(" ");
+  if (metrics) {
+    console.log(metrics);
+  }
+  const labels = [
+    post.nsfw ? "nsfw" : null,
+    post.spoiler ? "spoiler" : null,
+    post.promoted ? "promoted" : null,
+  ].filter((value): value is string => value !== null);
+  if (labels.length > 0) {
+    console.log(labels.join(" "));
+  }
+}
+
+async function handleRedditFeed(
+  registry: AccountRegistry,
+  args: string[],
+): Promise<void> {
+  const options = parseOptions(args);
+  assertAllowedOptions(
+    options,
+    new Set(["account", "headed", "json", "limit"]),
+  );
+  if (options.positionals.length > 0) {
+    throw new CliError(
+      "reddit feed does not accept positional arguments.",
+      2,
+    );
+  }
+  const limit = positiveIntegerOption(options, "limit", 20);
+  const account = await registry.resolve(stringOption(options, "account"));
+  const posts = await readRedditFeed(
+    account,
+    limit,
+    hasFlag(options, "headed"),
+  );
+  if (hasFlag(options, "json")) {
+    printJson({
+      account: account.identity
+        ? `u/${account.identity}`
+        : account.id,
+      posts,
+    });
+    return;
+  }
+  if (posts.length === 0) {
+    console.log("No posts found in the Reddit home feed.");
+    return;
+  }
+  posts.forEach((post, index) => {
+    if (index > 0) {
+      console.log("");
+    }
+    printRedditPost(post);
+  });
+}
+
+async function handleRedditProfile(
+  registry: AccountRegistry,
+  args: string[],
+): Promise<void> {
+  const options = parseOptions(args);
+  assertAllowedOptions(options, new Set(["account", "headed", "json"]));
+  const target = options.positionals[0];
+  if (!target) {
+    throw new CliError(
+      "reddit profile requires a profile URL or username.",
+      2,
+    );
+  }
+  if (options.positionals.length > 1) {
+    throw new CliError(
+      "reddit profile accepts exactly one profile URL or username.",
+      2,
+    );
+  }
+  resolveRedditProfileUrl(target);
+  const account = await registry.resolve(stringOption(options, "account"));
+  const profile = await readRedditProfile(
+    account,
+    target,
+    hasFlag(options, "headed"),
+  );
+  if (hasFlag(options, "json")) {
+    printJson(profile);
+    return;
+  }
+  console.log(`${profile.name} (u/${profile.username})`);
+  if (profile.id) {
+    console.log(`ID: ${profile.id}`);
+  }
+  console.log(`URL: ${profile.url}`);
+  if (profile.bio) {
+    console.log(profile.bio);
+  }
+  if (profile.createdAt) {
+    console.log(`Created: ${profile.createdAt}`);
+  }
+  if (profile.karma !== null) {
+    console.log(`Karma: ${profile.karma}`);
+  }
+  if (profile.postKarma !== null) {
+    console.log(`Post karma: ${profile.postKarma}`);
+  }
+  if (profile.commentKarma !== null) {
+    console.log(`Comment karma: ${profile.commentKarma}`);
+  }
+  if (profile.followers !== null) {
+    console.log(`Followers: ${profile.followers}`);
+  }
+  console.log(`Admin: ${profile.admin ? "yes" : "no"}`);
+  console.log(`Moderator: ${profile.moderator ? "yes" : "no"}`);
+}
+
 async function handleNotebook(
   registry: AccountRegistry,
   args: string[],
@@ -624,9 +869,42 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
     console.log(VERSION);
     return;
   }
-  if (!GNB_ALIASES.has(args[0]) && args[0] !== "x" && args[0] !== "twitter") {
+  if (
+    !GNB_ALIASES.has(args[0]) &&
+    args[0] !== "x" &&
+    args[0] !== "twitter" &&
+    !REDDIT_ALIASES.has(args[0])
+  ) {
     throw new CliError(
-      `Unknown application: ${args[0]}. Supported aliases: gnb, gemini-notebook, notebooklm, x, twitter`,
+      `Unknown application: ${args[0]}. Supported aliases: gnb, gemini-notebook, notebooklm, x, twitter, reddit`,
+      2,
+    );
+  }
+
+  if (REDDIT_ALIASES.has(args[0])) {
+    const registry = new AccountRegistry(
+      getAppPaths(process.env, "reddit"),
+      {
+        appName: "Reddit",
+        loginCommand: "agent-browser-app reddit auth login",
+        identityKind: "handle",
+      },
+    );
+    const command = args[1];
+    if (command === "auth") {
+      await handleRedditAuth(registry, args.slice(2));
+      return;
+    }
+    if (command === "feed") {
+      await handleRedditFeed(registry, args.slice(2));
+      return;
+    }
+    if (command === "profile") {
+      await handleRedditProfile(registry, args.slice(2));
+      return;
+    }
+    throw new CliError(
+      `Unknown Reddit command: ${command || "(missing)"}`,
       2,
     );
   }

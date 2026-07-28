@@ -94,6 +94,9 @@ describe("agent-browser-app CLI", () => {
     expect(help.stdout).toContain("agent-browser-app x auth login");
     expect(help.stdout).toContain("agent-browser-app x feed");
     expect(help.stdout).toContain("agent-browser-app x profile");
+    expect(help.stdout).toContain("agent-browser-app reddit auth login");
+    expect(help.stdout).toContain("agent-browser-app reddit feed");
+    expect(help.stdout).toContain("agent-browser-app reddit profile");
     expect(version.stdout.trim()).toBe(packageJson.version);
     expect(shortHelp.exitCode).toBe(0);
     expect(shortHelp.stdout).toContain("Executable aliases:");
@@ -248,6 +251,235 @@ describe("agent-browser-app CLI", () => {
     );
     expect(unknownOption.exitCode).toBe(2);
     expect(unknownOption.stderr).toContain("Unknown option");
+  });
+
+  test("runs the authenticated Reddit command flow", async () => {
+    const home = await createHome();
+
+    const beforeLogin = await runCli(
+      ["reddit", "feed", "--limit", "2"],
+      home,
+    );
+    expect(beforeLogin.exitCode).toBe(1);
+    expect(beforeLogin.stderr).toContain(
+      "agent-browser-app reddit auth login",
+    );
+
+    const loginResult = await runCli(
+      ["reddit", "auth", "login", "--timeout", "2"],
+      home,
+    );
+    expect(loginResult.exitCode).toBe(0);
+    expect(loginResult.stdout).toContain(
+      "Authentication saved for u/fixture_redditor.",
+    );
+
+    const accountsResult = await runCli(
+      ["reddit", "auth", "list", "--json"],
+      home,
+    );
+    expect(accountsResult.exitCode).toBe(0);
+    const accounts = JSON.parse(accountsResult.stdout);
+    expect(accounts.accounts).toHaveLength(1);
+    expect(accounts.accounts[0].identity).toBe("fixture_redditor");
+    expect(accounts.accounts[0].profileDir).toContain(
+      "/apps/agent-browser-app/reddit/",
+    );
+
+    const accountsText = await runCli(
+      ["reddit", "auth", "list"],
+      home,
+    );
+    expect(accountsText.exitCode).toBe(0);
+    expect(accountsText.stdout).toContain(
+      "* u/fixture_redditor [default]",
+    );
+
+    const feedResult = await runCli(
+      ["reddit", "feed", "--limit", "2", "--json"],
+      home,
+    );
+    expect(feedResult.exitCode).toBe(0);
+    const feed = JSON.parse(feedResult.stdout);
+    expect(feed.account).toBe("u/fixture_redditor");
+    expect(feed.posts).toHaveLength(2);
+    expect(feed.posts[0].title).toBe("First fixture post");
+    expect(feed.posts[1].subreddit).toBe("typescript");
+
+    const feedTextResult = await runCli(
+      ["reddit", "feed", "--limit", "1"],
+      home,
+    );
+    expect(feedTextResult.exitCode).toBe(0);
+    expect(feedTextResult.stdout).toContain(
+      "First fixture post (r/agentbrowser)",
+    );
+    expect(feedTextResult.stdout).toContain("score=42 comments=7");
+
+    const profileResult = await runCli(
+      [
+        "reddit",
+        "profile",
+        "https://old.reddit.com/u/spez/",
+        "--json",
+      ],
+      home,
+    );
+    expect(profileResult.exitCode).toBe(0);
+    const profile = JSON.parse(profileResult.stdout);
+    expect(profile.id).toBe("t2_fixture");
+    expect(profile.username).toBe("spez");
+    expect(profile.karma).toBe(123456);
+
+    const profileTextResult = await runCli(
+      ["reddit", "profile", "u/spez"],
+      home,
+    );
+    expect(profileTextResult.exitCode).toBe(0);
+    expect(profileTextResult.stdout).toContain("spez (u/spez)");
+    expect(profileTextResult.stdout).toContain("Karma: 123456");
+
+    const xAccounts = await runCli(
+      ["x", "auth", "list", "--json"],
+      home,
+    );
+    expect(xAccounts.exitCode).toBe(0);
+    expect(JSON.parse(xAccounts.stdout).accounts).toEqual([]);
+
+    const invocations = (await readFile(
+      join(home, "fake-invocations.jsonl"),
+      "utf8",
+    ))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as string[]);
+    expect(
+      invocations.some((invocation) =>
+        invocation.includes("agent-browser-app-reddit-default"),
+      ),
+    ).toBe(true);
+    expect(
+      invocations.some((invocation) => {
+        const stateIndex = invocation.indexOf("state");
+        return (
+          stateIndex >= 0 &&
+          invocation[stateIndex + 1] === "load" &&
+          invocation[stateIndex + 2]?.includes(
+            "/apps/agent-browser-app/reddit/",
+          )
+        );
+      }),
+    ).toBe(true);
+    expect(
+      invocations.some((invocation) => {
+        const openIndex = invocation.indexOf("open");
+        return (
+          openIndex >= 0 &&
+          invocation[openIndex + 1] ===
+            "https://www.reddit.com/user/spez/"
+        );
+      }),
+    ).toBe(true);
+  }, 20_000);
+
+  test("validates Reddit command arguments and options", async () => {
+    const home = await createHome();
+
+    const fractionalLimit = await runCli(
+      ["reddit", "feed", "--limit", "1.5"],
+      home,
+    );
+    expect(fractionalLimit.exitCode).toBe(2);
+    expect(fractionalLimit.stderr).toContain("positive integer");
+
+    const missingProfile = await runCli(
+      ["reddit", "profile"],
+      home,
+    );
+    expect(missingProfile.exitCode).toBe(2);
+    expect(missingProfile.stderr).toContain("profile URL or username");
+
+    const subredditUrl = await runCli(
+      ["reddit", "profile", "https://www.reddit.com/r/typescript/"],
+      home,
+    );
+    expect(subredditUrl.exitCode).toBe(2);
+    expect(subredditUrl.stderr).toContain("Invalid Reddit profile");
+
+    const unknownOption = await runCli(
+      ["reddit", "auth", "list", "--secret", "value"],
+      home,
+    );
+    expect(unknownOption.exitCode).toBe(2);
+    expect(unknownOption.stderr).toContain("Unknown option");
+  });
+
+  test("bootstraps Reddit login in an isolated system browser", async () => {
+    const home = await createHome();
+    const systemBrowserLog = join(home, "fake-system-browser.jsonl");
+    const systemBrowserDone = join(home, "fake-system-browser.done");
+
+    const result = await runCli(
+      [
+        "reddit",
+        "auth",
+        "login",
+        "--account",
+        "worktree-test",
+        "--system-browser",
+        "--timeout",
+        "2",
+      ],
+      home,
+      {
+        AGENT_BROWSER_APP_SYSTEM_BROWSER_BIN: fakeSystemBrowser,
+        FAKE_SYSTEM_BROWSER_LOG: systemBrowserLog,
+        FAKE_SYSTEM_BROWSER_DONE: systemBrowserDone,
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("Opening system Google Chrome");
+    expect(result.stdout).toContain(
+      "Authentication saved for u/fixture_redditor.",
+    );
+    const browserArguments = JSON.parse(
+      (await readFile(systemBrowserLog, "utf8")).trim(),
+    ) as string[];
+    expect(
+      browserArguments.find((argument) =>
+        argument.startsWith("--user-data-dir="),
+      ),
+    ).toContain(
+      "/apps/agent-browser-app/reddit/accounts/worktree-test/browser-profile",
+    );
+    expect(browserArguments).toContain(
+      "https://www.reddit.com/login/",
+    );
+    expect(
+      browserArguments.some((argument) =>
+        argument.startsWith("--remote-debugging-port="),
+      ),
+    ).toBe(true);
+
+    const invocations = (await readFile(
+      join(home, "fake-invocations.jsonl"),
+      "utf8",
+    ))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as string[]);
+    const cdpInvocation = invocations.find((invocation) =>
+      invocation.includes("--cdp"),
+    );
+    expect(cdpInvocation).toBeDefined();
+    expect(cdpInvocation).not.toContain("--profile");
+    expect(cdpInvocation).not.toContain("--headed");
+    expect(
+      invocations.some((invocation) =>
+        invocation.includes("agent-browser-app-reddit-worktree-test"),
+      ),
+    ).toBe(true);
   });
 
   test("bootstraps X Google login in an isolated system browser", async () => {

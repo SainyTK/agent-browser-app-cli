@@ -3,12 +3,18 @@ import { lstat } from "node:fs/promises";
 import { createServer } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { CliError } from "../../errors.ts";
-import type { Account } from "../../registry.ts";
+import { CliError } from "../errors.ts";
+import type { Account } from "../registry.ts";
 
-const X_LOGIN_URL = "https://x.com/i/flow/login";
+export interface SystemBrowserApp {
+  name: string;
+  loginUrl: string;
+  isAuthenticatedUrl: (url: URL, title?: string) => boolean;
+  authenticatedDestination: string;
+}
 
 interface BrowserTarget {
+  title?: string;
   type: string;
   url: string;
 }
@@ -47,6 +53,7 @@ async function reserveTcpPort(): Promise<number> {
 function browserCommand(
   account: Account,
   cdpPort: number,
+  loginUrl: string,
   environment: NodeJS.ProcessEnv,
 ): string[] {
   const sharedArguments = [
@@ -56,7 +63,7 @@ function browserCommand(
     `--user-data-dir=${account.profileDir}`,
     "--no-first-run",
     "--no-default-browser-check",
-    X_LOGIN_URL,
+    loginUrl,
   ];
   const override = environment.AGENT_BROWSER_APP_SYSTEM_BROWSER_BIN?.trim();
   if (override) {
@@ -166,6 +173,7 @@ async function waitForDebuggingPort(
 
 export async function startSystemBrowser(
   account: Account,
+  loginUrl: string,
   environment: NodeJS.ProcessEnv = process.env,
   onStarted: () => void = () => undefined,
 ): Promise<SystemBrowserSession> {
@@ -175,7 +183,7 @@ export async function startSystemBrowser(
     );
   }
   const cdpPort = await reserveTcpPort();
-  const command = browserCommand(account, cdpPort, environment);
+  const command = browserCommand(account, cdpPort, loginUrl, environment);
   let processHandle: ReturnType<typeof Bun.spawn>;
   try {
     processHandle = Bun.spawn(command, {
@@ -232,6 +240,7 @@ export async function startSystemBrowser(
 export async function waitForSystemBrowserLogin(
   session: SystemBrowserSession,
   timeoutSeconds: number,
+  app: SystemBrowserApp,
 ): Promise<void> {
   const deadline = Date.now() + timeoutSeconds * 1000;
   while (Date.now() < deadline) {
@@ -242,10 +251,7 @@ export async function waitForSystemBrowserLogin(
       }
       try {
         const url = new URL(target.url);
-        return (
-          (url.hostname === "x.com" || url.hostname === "www.x.com") &&
-          url.pathname.replace(/\/+$/, "") === "/home"
-        );
+        return app.isAuthenticatedUrl(url, target.title);
       } catch {
         return false;
       }
@@ -256,6 +262,6 @@ export async function waitForSystemBrowserLogin(
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
   throw new CliError(
-    `X authentication did not reach the home feed within ${timeoutSeconds} seconds.`,
+    `${app.name} authentication did not reach ${app.authenticatedDestination} within ${timeoutSeconds} seconds.`,
   );
 }
