@@ -30,6 +30,9 @@ interface FakeState {
   pendingNotebookId?: string;
   sources: string[];
   pendingSourceIndex?: number;
+  sourceMode?: "copied-text" | "websites";
+  sourceInput?: string;
+  creatingPolls?: number;
 }
 
 async function readState(): Promise<FakeState> {
@@ -134,6 +137,13 @@ if (command === "tab" && (!rest[0] || rest[0] === "list")) {
   await saveState(state);
   output({ title: "Gemini Notebook", url: state.url });
 } else if (command === "get" && rest[0] === "url") {
+  if (state.url.endsWith("/notebook/creating")) {
+    state.creatingPolls = (state.creatingPolls || 0) + 1;
+    if (state.creatingPolls >= 2) {
+      state.url = "https://notebooklm.google.com/notebook/new-456";
+    }
+    await saveState(state);
+  }
   output({ url: state.url });
 } else if (command === "eval") {
   const encoded = rest[rest.indexOf("-b") + 1];
@@ -296,6 +306,17 @@ if (command === "tab" && (!rest[0] || rest[0] === "list")) {
         })),
       },
     });
+  } else if (
+    script.includes("aba:source-dialog-option-copied-text") ||
+    script.includes("aba:source-dialog-option-websites")
+  ) {
+    output({ result: true });
+  } else if (
+    script.includes("aba:copied-text-input") ||
+    script.includes("aba:urls-input") ||
+    script.includes("aba:source-insert-button")
+  ) {
+    output({ result: true });
   } else if (script.includes("aba:notebook-menu")) {
     const notebookId = JSON.parse(
       script.match(/const notebookId = (".*");/)?.[1] || '""',
@@ -337,7 +358,30 @@ if (command === "tab" && (!rest[0] || rest[0] === "list")) {
 } else if (command === "click") {
   const selector = rest[0] || "";
   if (selector.includes("create-notebook")) {
-    state.url = "https://notebooklm.google.com/notebook/new-456";
+    state.url = "https://notebooklm.google.com/notebook/creating";
+    state.creatingPolls = 0;
+    await saveState(state);
+  } else if (selector.includes("source-option-copied-text")) {
+    state.sourceMode = "copied-text";
+    state.sourceInput = undefined;
+    await saveState(state);
+  } else if (selector.includes("source-option-websites")) {
+    state.sourceMode = "websites";
+    state.sourceInput = undefined;
+    await saveState(state);
+  } else if (selector.includes("source-insert") && state.sourceInput) {
+    if (state.sourceMode === "copied-text") {
+      state.sources.push("Pasted text");
+    } else if (state.sourceMode === "websites") {
+      state.sources.push(
+        ...state.sourceInput
+          .split("\n")
+          .map((url) => url.trim())
+          .filter(Boolean),
+      );
+    }
+    state.sourceMode = undefined;
+    state.sourceInput = undefined;
     await saveState(state);
   } else if (
     selector.includes("confirm-notebook-removal") &&
@@ -358,6 +402,14 @@ if (command === "tab" && (!rest[0] || rest[0] === "list")) {
   }
   output({ clicked: true });
 } else if (command === "fill") {
+  const selector = rest[0] || "";
+  if (
+    selector.includes("copied-text-input") ||
+    selector.includes("urls-input")
+  ) {
+    state.sourceInput = rest[1] || "";
+    await saveState(state);
+  }
   output({ ok: true });
 } else if (command === "press") {
   state.submitted = true;

@@ -174,6 +174,239 @@ interface TargetInfo {
   url: string;
 }
 
+interface Frame {
+  id: string;
+  url: string;
+}
+
+interface FrameTree {
+  frame: Frame;
+  childFrames?: FrameTree[];
+}
+
+function flattenFrames(tree: FrameTree): Frame[] {
+  return [
+    tree.frame,
+    ...(tree.childFrames || []).flatMap((child) => flattenFrames(child)),
+  ];
+}
+
+function notebookTarget(
+  targets: TargetInfo[],
+  pageUrl: string,
+): TargetInfo | undefined {
+  return (
+    targets.find(
+      (candidate) =>
+        candidate.type === "page" && candidate.url === pageUrl,
+    ) ??
+    targets.find(
+      (candidate) =>
+        candidate.type === "page" &&
+        /^https:\/\/(?:notebooklm|notebook)\.google\.com\/notebook\//.test(
+          candidate.url,
+        ),
+    )
+  );
+}
+
+async function withFrameSession<T>(
+  cdpUrl: string,
+  pageUrl: string,
+  frameUrlIncludes: string,
+  timeoutMs: number,
+  operation: (
+    client: CdpClient,
+    sessionId: string,
+    executionContextId: number,
+  ) => Promise<T>,
+): Promise<T> {
+  const client = await CdpClient.connect(cdpUrl);
+  let sessionId: string | undefined;
+  try {
+    const targets = await client.send<{ targetInfos: TargetInfo[] }>(
+      "Target.getTargets",
+    );
+    const target = notebookTarget(targets.targetInfos, pageUrl);
+    if (!target) {
+      throw new CliError("Could not find the Gemini Notebook browser target.");
+    }
+    const attached = await client.send<{ sessionId: string }>(
+      "Target.attachToTarget",
+      { targetId: target.targetId, flatten: true },
+    );
+    sessionId = attached.sessionId;
+
+    const deadline = Date.now() + timeoutMs;
+    let frame: Frame | undefined;
+    while (!frame && Date.now() < deadline) {
+      const result = await client.send<{ frameTree: FrameTree }>(
+        "Page.getFrameTree",
+        {},
+        sessionId,
+      );
+      frame = flattenFrames(result.frameTree).find((candidate) =>
+        candidate.url.includes(frameUrlIncludes),
+      );
+      if (!frame) {
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+    }
+    if (!frame) {
+      throw new CliError(
+        `Could not find the browser frame containing "${frameUrlIncludes}".`,
+      );
+    }
+
+    const isolatedWorld = await client.send<{
+      executionContextId: number;
+    }>(
+      "Page.createIsolatedWorld",
+      {
+        frameId: frame.id,
+        worldName: "agent-browser-app",
+        grantUniveralAccess: false,
+      },
+      sessionId,
+    );
+    return await operation(
+      client,
+      sessionId,
+      isolatedWorld.executionContextId,
+    );
+  } finally {
+    if (sessionId) {
+      await client
+        .send("Target.detachFromTarget", { sessionId })
+        .catch(() => undefined);
+    }
+    client.close();
+  }
+}
+
+export async function evaluateInFrame<T>(
+  cdpUrl: string,
+  pageUrl: string,
+  frameUrlIncludes: string,
+  expression: string,
+  timeoutMs = 20_000,
+): Promise<T> {
+  return withFrameSession(
+    cdpUrl,
+    pageUrl,
+    frameUrlIncludes,
+    timeoutMs,
+    async (client, sessionId, executionContextId) => {
+      const evaluated = await client.send<{
+        result: { value?: T; description?: string };
+        exceptionDetails?: {
+          text?: string;
+          exception?: { description?: string };
+        };
+      }>(
+        "Runtime.evaluate",
+        {
+          expression,
+          contextId: executionContextId,
+          returnByValue: true,
+          awaitPromise: true,
+          userGesture: true,
+        },
+        sessionId,
+        timeoutMs,
+      );
+      if (evaluated.exceptionDetails) {
+        throw new CliError(
+          evaluated.exceptionDetails.exception?.description ||
+            evaluated.exceptionDetails.text ||
+            "Browser frame evaluation failed.",
+        );
+      }
+      return evaluated.result.value as T;
+    },
+  );
+}
+
+export async function fillInFrame(
+  cdpUrl: string,
+  pageUrl: string,
+  frameUrlIncludes: string,
+  selector: string,
+  value: string,
+  pressEnter = false,
+  timeoutMs = 20_000,
+): Promise<boolean> {
+  return withFrameSession(
+    cdpUrl,
+    pageUrl,
+    frameUrlIncludes,
+    timeoutMs,
+    async (client, sessionId, executionContextId) => {
+      const focused = await client.send<{
+        result: { value?: boolean };
+        exceptionDetails?: {
+          text?: string;
+          exception?: { description?: string };
+        };
+      }>(
+        "Runtime.evaluate",
+        {
+          expression: String.raw`
+(() => {
+  const target = document.querySelector(${JSON.stringify(selector)});
+  if (!target) return false;
+  target.focus();
+  target.select();
+  return true;
+})()
+`,
+          contextId: executionContextId,
+          returnByValue: true,
+          userGesture: true,
+        },
+        sessionId,
+        timeoutMs,
+      );
+      if (focused.exceptionDetails || !focused.result.value) {
+        return false;
+      }
+      await client.send(
+        "Input.insertText",
+        { text: value },
+        sessionId,
+        timeoutMs,
+      );
+      if (pressEnter) {
+        await client.send(
+          "Input.dispatchKeyEvent",
+          {
+            type: "keyDown",
+            key: "Enter",
+            code: "Enter",
+            windowsVirtualKeyCode: 13,
+            nativeVirtualKeyCode: 13,
+          },
+          sessionId,
+          timeoutMs,
+        );
+        await client.send(
+          "Input.dispatchKeyEvent",
+          {
+            type: "keyUp",
+            key: "Enter",
+            code: "Enter",
+            windowsVirtualKeyCode: 13,
+            nativeVirtualKeyCode: 13,
+          },
+          sessionId,
+          timeoutMs,
+        );
+      }
+      return true;
+    },
+  );
+}
+
 export async function uploadThroughFileChooser(
   cdpUrl: string,
   pageUrl: string,
@@ -189,18 +422,7 @@ export async function uploadThroughFileChooser(
     const targets = await client.send<{ targetInfos: TargetInfo[] }>(
       "Target.getTargets",
     );
-    const target =
-      targets.targetInfos.find(
-        (candidate) =>
-          candidate.type === "page" && candidate.url === pageUrl,
-      ) ??
-      targets.targetInfos.find(
-        (candidate) =>
-          candidate.type === "page" &&
-          /^https:\/\/(?:notebooklm|notebook)\.google\.com\/notebook\//.test(
-            candidate.url,
-          ),
-      );
+    const target = notebookTarget(targets.targetInfos, pageUrl);
     if (!target) {
       throw new CliError("Could not find the Gemini Notebook browser target.");
     }

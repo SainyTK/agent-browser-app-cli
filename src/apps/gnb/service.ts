@@ -9,7 +9,9 @@ import { CliError } from "../../errors.ts";
 import type { Account } from "../../registry.ts";
 import {
   detectAccountEmailScript,
+  insertDrivePickerSelectionScript,
   listNotebooksScript,
+  markCopiedTextInputScript,
   markConfirmNotebookRemovalScript,
   markCreateButtonScript,
   markConfirmSourceRemovalScript,
@@ -18,13 +20,19 @@ import {
   markQueryInputScript,
   markRemoveNotebookMenuItemScript,
   markRemoveSourceMenuItemScript,
+  markSourceDialogOptionScript,
+  markSourceInsertButtonScript,
   markSourceMenuButtonScript,
+  markUrlsInputScript,
   notebookRemovalSettledScript,
   markUploadButtonScript,
   readChatStateScript,
+  readDrivePickerSelectionScript,
+  readDrivePickerStateScript,
   readNotebookScript,
   readSourcesScript,
   readUploadStatusScript,
+  selectDrivePickerItemScript,
 } from "./browser-scripts.ts";
 
 export interface NotebookSummary {
@@ -232,11 +240,14 @@ export async function createNotebook(
     await browser.click('[data-agent-browser-app-target="create-notebook"]');
     const url = await waitUntil(
       () => browser.currentUrl(),
-      (value) => NOTEBOOK_URL_PATTERN.test(value),
+      (value) => {
+        const match = value.match(NOTEBOOK_URL_PATTERN);
+        return Boolean(match && match[1] !== "creating");
+      },
       30_000,
     );
     const match = url.match(NOTEBOOK_URL_PATTERN);
-    if (!match) {
+    if (!match || match[1] === "creating") {
       throw new CliError(
         "Gemini Notebook did not navigate to a new notebook after the create action.",
       );
@@ -693,6 +704,418 @@ async function loadSources(
   throw new CliError(
     "Gemini Notebook source list did not become stable.",
   );
+}
+
+interface AddedSourcesResult {
+  notebookId: string;
+  url: string;
+  sources: SourceSummary[];
+}
+
+function addedSourcesSince(
+  baseline: SourceSummary[],
+  current: SourceSummary[],
+): SourceSummary[] {
+  const baselineCounts = new Map<string, number>();
+  for (const source of baseline) {
+    const title = source.title.trim().toLowerCase();
+    baselineCounts.set(title, (baselineCounts.get(title) || 0) + 1);
+  }
+  return current.filter((source) => {
+    const title = source.title.trim().toLowerCase();
+    const remaining = baselineCounts.get(title) || 0;
+    if (remaining > 0) {
+      baselineCounts.set(title, remaining - 1);
+      return false;
+    }
+    return true;
+  });
+}
+
+async function waitForAddedSources(
+  browser: AgentBrowser,
+  baseline: SourceSummary[],
+  expectedCount: number,
+  timeoutSeconds: number,
+  description: string,
+): Promise<SourceSummary[]> {
+  const deadline = Date.now() + timeoutSeconds * 1000;
+  let latest: SourceSummary[] = [];
+  while (Date.now() < deadline) {
+    const state = await browser.eval<SourceListState>(readSourcesScript);
+    latest = addedSourcesSince(baseline, state.sources);
+    const failed = latest.find((source) => source.status === "error");
+    if (failed) {
+      throw new CliError(
+        `Gemini Notebook marked the new ${description} source "${failed.title}" as failed.`,
+      );
+    }
+    if (
+      state.loaded &&
+      latest.length >= expectedCount &&
+      latest.every((source) => source.status === "ready")
+    ) {
+      return latest;
+    }
+    await delay(1000);
+  }
+  if (latest.length < expectedCount) {
+    throw new CliError(
+      `Gemini Notebook did not accept ${description} within ${timeoutSeconds} seconds.`,
+    );
+  }
+  throw new CliError(
+    `Gemini Notebook did not finish processing ${description} within ${timeoutSeconds} seconds.`,
+  );
+}
+
+async function markAndClickSourceOption(
+  browser: AgentBrowser,
+  option: "copied-text" | "websites" | "drive",
+): Promise<void> {
+  const marked = await waitUntil(
+    () => browser.eval<boolean>(markSourceDialogOptionScript(option)),
+    Boolean,
+    30_000,
+    500,
+  );
+  if (!marked) {
+    throw new CliError(
+      `Could not find the Gemini Notebook ${option} source control. Retry with --headed to inspect the current interface.`,
+    );
+  }
+  await browser.click(
+    `[data-agent-browser-app-target="source-option-${option}"]`,
+  );
+}
+
+async function addSourcesFromDialog(
+  account: Account,
+  target: string,
+  headed: boolean,
+  timeoutSeconds: number,
+  expectedCount: number,
+  description: string,
+  submit: (browser: AgentBrowser) => Promise<void>,
+): Promise<AddedSourcesResult> {
+  const url = directNotebookUrl(target);
+  const match = url?.match(NOTEBOOK_URL_PATTERN);
+  if (!url || !match) {
+    throw new CliError(`Invalid Gemini Notebook ID or URL: ${target}.`);
+  }
+  return runAuthenticated(account, async (browser) => {
+    await browser.open(`${url}?addSource=true`, headed);
+    assertAuthenticated(await browser.currentUrl());
+    const baseline = await loadSources(browser);
+    await submit(browser);
+    const sources = await waitForAddedSources(
+      browser,
+      baseline.sources,
+      expectedCount,
+      timeoutSeconds,
+      description,
+    );
+    return {
+      notebookId: match[1],
+      url,
+      sources,
+    };
+  });
+}
+
+export async function addTextSource(
+  account: Account,
+  target: string,
+  text: string,
+  headed: boolean,
+  timeoutSeconds: number,
+): Promise<AddedSourcesResult> {
+  if (!text.trim()) {
+    throw new CliError(
+      "notebook source add-text requires non-empty text content.",
+      2,
+    );
+  }
+  return addSourcesFromDialog(
+    account,
+    target,
+    headed,
+    timeoutSeconds,
+    1,
+    "copied text",
+    async (browser) => {
+      await markAndClickSourceOption(browser, "copied-text");
+      const inputMarked = await waitUntil(
+        () => browser.eval<boolean>(markCopiedTextInputScript),
+        Boolean,
+        15_000,
+        250,
+      );
+      if (!inputMarked) {
+        throw new CliError(
+          "Could not find the Gemini Notebook copied-text input. Retry with --headed to inspect the current interface.",
+        );
+      }
+      await browser.fill(
+        '[data-agent-browser-app-target="copied-text-input"]',
+        text,
+      );
+      const insertMarked = await waitUntil(
+        () => browser.eval<boolean>(markSourceInsertButtonScript),
+        Boolean,
+        10_000,
+        250,
+      );
+      if (!insertMarked) {
+        throw new CliError(
+          "Gemini Notebook did not enable the copied-text Insert action.",
+        );
+      }
+      await browser.click(
+        '[data-agent-browser-app-target="source-insert"]',
+      );
+    },
+  );
+}
+
+function normalizeSourceUrls(inputUrls: string[]): string[] {
+  if (inputUrls.length === 0) {
+    throw new CliError(
+      "notebook source add-urls requires at least one URL.",
+      2,
+    );
+  }
+  const urls = inputUrls.map((input) => {
+    let parsed: URL;
+    try {
+      parsed = new URL(input);
+    } catch {
+      throw new CliError(`Invalid source URL: ${input}.`, 2);
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      throw new CliError(
+        `Source URL must use http or https: ${input}.`,
+        2,
+      );
+    }
+    return parsed.toString();
+  });
+  const duplicate = urls.find(
+    (url, index) => urls.indexOf(url) !== index,
+  );
+  if (duplicate) {
+    throw new CliError(`Source URLs must be unique. Duplicate: ${duplicate}`, 2);
+  }
+  return urls;
+}
+
+export async function addUrlSources(
+  account: Account,
+  target: string,
+  inputUrls: string[],
+  headed: boolean,
+  timeoutSeconds: number,
+): Promise<AddedSourcesResult & { inputUrls: string[] }> {
+  const urls = normalizeSourceUrls(inputUrls);
+  const result = await addSourcesFromDialog(
+    account,
+    target,
+    headed,
+    timeoutSeconds,
+    urls.length,
+    `${urls.length} URL source(s)`,
+    async (browser) => {
+      await markAndClickSourceOption(browser, "websites");
+      const inputMarked = await waitUntil(
+        () => browser.eval<boolean>(markUrlsInputScript),
+        Boolean,
+        15_000,
+        250,
+      );
+      if (!inputMarked) {
+        throw new CliError(
+          "Could not find the Gemini Notebook URL input. Retry with --headed to inspect the current interface.",
+        );
+      }
+      await browser.fill(
+        '[data-agent-browser-app-target="urls-input"]',
+        urls.join("\n"),
+      );
+      const insertMarked = await waitUntil(
+        () => browser.eval<boolean>(markSourceInsertButtonScript),
+        Boolean,
+        10_000,
+        250,
+      );
+      if (!insertMarked) {
+        throw new CliError(
+          "Gemini Notebook did not enable the URL Insert action.",
+        );
+      }
+      await browser.click(
+        '[data-agent-browser-app-target="source-insert"]',
+      );
+    },
+  );
+  return { ...result, inputUrls: urls };
+}
+
+interface DrivePickerState {
+  ready: boolean;
+  searchValue: string;
+  searching: boolean;
+  optionCount: number;
+  exactMatchCount: number;
+}
+
+async function waitForDrivePickerResults(
+  browser: AgentBrowser,
+  target: string,
+): Promise<DrivePickerState> {
+  await delay(1000);
+  const deadline = Date.now() + 20_000;
+  let latest: DrivePickerState = {
+    ready: false,
+    searchValue: "",
+    searching: true,
+    optionCount: 0,
+    exactMatchCount: 0,
+  };
+  let signature = "";
+  let stablePolls = 0;
+  while (Date.now() < deadline) {
+    latest = await browser.evalInFrame<DrivePickerState>(
+      "docs.google.com/picker/",
+      readDrivePickerStateScript(target),
+    );
+    if (latest.exactMatchCount === 1) {
+      return latest;
+    }
+    const nextSignature = JSON.stringify(latest);
+    if (
+      latest.ready &&
+      latest.searchValue === target &&
+      !latest.searching &&
+      nextSignature === signature
+    ) {
+      stablePolls += 1;
+      if (stablePolls >= 8) {
+        return latest;
+      }
+    } else {
+      stablePolls = 0;
+    }
+    signature = nextSignature;
+    await delay(500);
+  }
+  throw new CliError(
+    `Google Drive search did not settle for "${target}".`,
+  );
+}
+
+export async function addDriveSource(
+  account: Account,
+  target: string,
+  driveTarget: string,
+  headed: boolean,
+  timeoutSeconds: number,
+): Promise<AddedSourcesResult & { driveTarget: string }> {
+  const normalizedTarget = driveTarget.trim();
+  if (!normalizedTarget) {
+    throw new CliError(
+      "notebook source add-drive requires a Drive item name or URL.",
+      2,
+    );
+  }
+  const result = await addSourcesFromDialog(
+    account,
+    target,
+    headed,
+    timeoutSeconds,
+    1,
+    `Drive item "${normalizedTarget}"`,
+    async (browser) => {
+      await markAndClickSourceOption(browser, "drive");
+      let picker = await browser.evalInFrame<DrivePickerState>(
+        "docs.google.com/picker/",
+        readDrivePickerStateScript(normalizedTarget),
+      );
+      if (picker.exactMatchCount === 0) {
+        const searchReady = await waitUntil(
+          () =>
+            browser.fillInFrame(
+              "docs.google.com/picker/",
+              'input[role="combobox"][aria-label*="Search in Drive" i], input[placeholder*="Search in Drive" i]',
+              normalizedTarget,
+              true,
+            ),
+          Boolean,
+          20_000,
+          500,
+        );
+        if (!searchReady) {
+          throw new CliError(
+            "Could not find the Google Drive picker search input. Retry with --headed to inspect the current interface.",
+          );
+        }
+        picker = await waitForDrivePickerResults(
+          browser,
+          normalizedTarget,
+        );
+      }
+      const targetIsUrl = /^https?:\/\//i.test(normalizedTarget);
+      const matchCount = targetIsUrl
+        ? picker.exactMatchCount || picker.optionCount
+        : picker.exactMatchCount;
+      if (matchCount === 0) {
+        throw new CliError(
+          `Could not find a Google Drive item matching "${normalizedTarget}".`,
+        );
+      }
+      if (matchCount > 1) {
+        throw new CliError(
+          `Multiple Google Drive items match "${normalizedTarget}". Use the item's Drive URL to select it exactly.`,
+        );
+      }
+      const selected = await browser.evalInFrame<boolean>(
+        "docs.google.com/picker/",
+        selectDrivePickerItemScript(normalizedTarget),
+      );
+      if (!selected) {
+        throw new CliError(
+          `Could not select Google Drive item "${normalizedTarget}".`,
+        );
+      }
+      const selection = await waitUntil(
+        () =>
+          browser.evalInFrame<{
+            selectedCount: number;
+            canInsert: boolean;
+          }>(
+            "docs.google.com/picker/",
+            readDrivePickerSelectionScript,
+          ),
+        (value) => value.selectedCount === 1 && value.canInsert,
+        10_000,
+        250,
+      );
+      if (selection.selectedCount !== 1 || !selection.canInsert) {
+        throw new CliError(
+          `Google Drive did not finish selecting "${normalizedTarget}".`,
+        );
+      }
+      const inserted = await browser.evalInFrame<boolean>(
+        "docs.google.com/picker/",
+        insertDrivePickerSelectionScript,
+      );
+      if (!inserted) {
+        throw new CliError(
+          `Google Drive did not enable Insert for "${normalizedTarget}".`,
+        );
+      }
+    },
+  );
+  return { ...result, driveTarget: normalizedTarget };
 }
 
 export async function listSources(

@@ -435,6 +435,245 @@ export const markUploadButtonScript = String.raw`
 })()
 `;
 
+export function markSourceDialogOptionScript(
+  option: "copied-text" | "websites" | "drive",
+): string {
+  const label = {
+    "copied-text": "Copied text",
+    websites: "Websites",
+    drive: "Drive",
+  }[option];
+  return String.raw`
+/* aba:source-dialog-option-${option} */
+(() => {
+  const expected = ${JSON.stringify(label)};
+  const visible = (element) => {
+    const rect = element.getBoundingClientRect();
+    const style = getComputedStyle(element);
+    return rect.width > 0 && rect.height > 0 &&
+      style.visibility !== "hidden" && style.display !== "none";
+  };
+  const dialogs = Array.from(
+    document.querySelectorAll('[role="dialog"], mat-dialog-container')
+  ).filter(visible);
+  const target = dialogs.flatMap((dialog) =>
+    Array.from(dialog.querySelectorAll("button, [role=button]"))
+  ).find((element) => {
+    const label = [
+      element.getAttribute("aria-label"),
+      element.textContent
+    ].filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
+    return visible(element) && label.endsWith(expected);
+  });
+  if (!target) return false;
+  target.setAttribute(
+    "data-agent-browser-app-target",
+    "source-option-${option}"
+  );
+  return true;
+})()
+`;
+}
+
+function markSourceInputScript(
+  marker: string,
+  selectors: string[],
+): string {
+  return String.raw`
+/* aba:${marker} */
+(() => {
+  const visible = (element) => {
+    const rect = element.getBoundingClientRect();
+    const style = getComputedStyle(element);
+    return rect.width > 0 && rect.height > 0 &&
+      style.visibility !== "hidden" && style.display !== "none";
+  };
+  const selectors = ${JSON.stringify(selectors)};
+  for (const selector of selectors) {
+    const target = Array.from(document.querySelectorAll(selector)).find(visible);
+    if (!target) continue;
+    target.setAttribute("data-agent-browser-app-target", "${marker}");
+    return true;
+  }
+  return false;
+})()
+`;
+}
+
+export const markCopiedTextInputScript = markSourceInputScript(
+  "copied-text-input",
+  [
+    'textarea[aria-label="Pasted text"]',
+    'textarea[placeholder="Paste text here"]',
+  ],
+);
+
+export const markUrlsInputScript = markSourceInputScript(
+  "urls-input",
+  [
+    'textarea[aria-label="Enter URLs"]',
+    'textarea[placeholder="Paste any links"]',
+  ],
+);
+
+export const markSourceInsertButtonScript = String.raw`
+/* aba:source-insert-button */
+(() => {
+  const visible = (element) => {
+    const rect = element.getBoundingClientRect();
+    const style = getComputedStyle(element);
+    return rect.width > 0 && rect.height > 0 &&
+      style.visibility !== "hidden" && style.display !== "none";
+  };
+  const dialogs = Array.from(
+    document.querySelectorAll('[role="dialog"], mat-dialog-container')
+  ).filter(visible);
+  const target = dialogs.flatMap((dialog) =>
+    Array.from(dialog.querySelectorAll("button"))
+  ).find((element) => {
+    const label = [
+      element.getAttribute("aria-label"),
+      element.textContent
+    ].filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
+    return visible(element) && /^insert$/i.test(label) &&
+      !element.hasAttribute("disabled");
+  });
+  if (!target) return false;
+  target.setAttribute("data-agent-browser-app-target", "source-insert");
+  return true;
+})()
+`;
+
+export function readDrivePickerStateScript(target: string): string {
+  return String.raw`
+/* aba:drive-picker-state */
+(() => {
+  const expected = ${JSON.stringify(target)}
+    .replace(/\s+/g, " ").trim().toLowerCase();
+  const visible = (element) => {
+    const rect = element.getBoundingClientRect();
+    const style = getComputedStyle(element);
+    return rect.width > 0 && rect.height > 0 &&
+      style.visibility !== "hidden" && style.display !== "none";
+  };
+  const input = document.querySelector(
+    'input[role="combobox"][aria-label*="Search in Drive" i], ' +
+    'input[placeholder*="Search in Drive" i]'
+  );
+  const optionName = (option) => {
+    const attribute = option.getAttribute("data-is-doc-name");
+    if (attribute && attribute !== "true") return attribute;
+    const named = option.querySelector("[data-is-doc-name]");
+    if (named && named !== option) return named.textContent || "";
+    return option.getAttribute("aria-label") || option.textContent || "";
+  };
+  const options = Array.from(
+    document.querySelectorAll('[role="option"]:not([aria-disabled="true"])')
+  );
+  const exactMatchCount = options.filter((option) =>
+    optionName(option).replace(/\s+/g, " ").trim().toLowerCase() === expected
+  ).length;
+  return {
+    ready: Boolean(input),
+    searchValue: input?.value || "",
+    searching: Array.from(
+      document.querySelectorAll(
+        '[role="progressbar"], [aria-label*="loading" i]'
+      )
+    ).some(visible),
+    optionCount: options.length,
+    exactMatchCount
+  };
+})()
+`;
+}
+
+export function selectDrivePickerItemScript(target: string): string {
+  const targetIsUrl = /^https?:\/\//i.test(target);
+  return String.raw`
+/* aba:drive-picker-select */
+(() => {
+  const expected = ${JSON.stringify(target)}
+    .replace(/\s+/g, " ").trim().toLowerCase();
+  const targetIsUrl = ${targetIsUrl};
+  const optionName = (option) => {
+    const attribute = option.getAttribute("data-is-doc-name");
+    if (attribute && attribute !== "true") return attribute;
+    const named = option.querySelector("[data-is-doc-name]");
+    if (named && named !== option) return named.textContent || "";
+    return option.getAttribute("aria-label") || option.textContent || "";
+  };
+  const options = Array.from(
+    document.querySelectorAll('[role="option"]:not([aria-disabled="true"])')
+  );
+  const exactMatches = options.filter((option) =>
+    optionName(option).replace(/\s+/g, " ").trim().toLowerCase() === expected
+  );
+  const target = exactMatches.length === 1
+    ? exactMatches[0]
+    : targetIsUrl && options.length === 1
+      ? options[0]
+      : null;
+  if (!target) return false;
+  const rect = target.getBoundingClientRect();
+  const eventOptions = {
+    bubbles: true,
+    clientX: rect.left + Math.min(12, rect.width / 2),
+    clientY: rect.top + Math.min(12, rect.height / 2)
+  };
+  target.dispatchEvent(new MouseEvent("mousedown", eventOptions));
+  target.dispatchEvent(new MouseEvent("mouseup", eventOptions));
+  target.dispatchEvent(new MouseEvent("click", eventOptions));
+  return true;
+})()
+`;
+}
+
+export const readDrivePickerSelectionScript = String.raw`
+/* aba:drive-picker-selection */
+(() => {
+  const selectedCount = document.querySelectorAll(
+    '[role="option"][aria-selected="true"]'
+  ).length;
+  const insert = Array.from(
+    document.querySelectorAll("button, [role=button]")
+  ).find((element) => {
+    const ariaLabel = (element.getAttribute("aria-label") || "")
+      .replace(/\s+/g, " ").trim();
+    const text = (element.textContent || "").replace(/\s+/g, " ").trim();
+    return (
+      /^insert\s+\d+\s+items?$/i.test(ariaLabel) ||
+      /^insert$/i.test(text)
+    ) &&
+      !element.hasAttribute("disabled") &&
+      element.getAttribute("aria-disabled") !== "true";
+  });
+  return { selectedCount, canInsert: Boolean(insert) };
+})()
+`;
+
+export const insertDrivePickerSelectionScript = String.raw`
+/* aba:drive-picker-insert */
+(() => {
+  const insert = Array.from(
+    document.querySelectorAll("button, [role=button]")
+  ).find((element) => {
+    const ariaLabel = (element.getAttribute("aria-label") || "")
+      .replace(/\s+/g, " ").trim();
+    const text = (element.textContent || "").replace(/\s+/g, " ").trim();
+    return (
+      /^insert\s+\d+\s+items?$/i.test(ariaLabel) ||
+      /^insert$/i.test(text)
+    ) &&
+      !element.hasAttribute("disabled") &&
+      element.getAttribute("aria-disabled") !== "true";
+  });
+  if (!insert) return false;
+  insert.click();
+  return true;
+})()
+`;
+
 export function readUploadStatusScript(
   fileName: string,
   baselineMatchingCount = 0,

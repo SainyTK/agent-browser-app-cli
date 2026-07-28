@@ -85,6 +85,15 @@ describe("agent-browser-app CLI", () => {
     expect(help.stdout).toContain(
       "agent-browser-app gnb notebook source upload-files",
     );
+    expect(help.stdout).toContain(
+      "agent-browser-app gnb notebook source add-text",
+    );
+    expect(help.stdout).toContain(
+      "agent-browser-app gnb notebook source add-urls",
+    );
+    expect(help.stdout).toContain(
+      "agent-browser-app gnb notebook source add-drive",
+    );
     expect(help.stdout).not.toContain(
       "agent-browser-app gnb notebook upload",
     );
@@ -657,4 +666,96 @@ describe("agent-browser-app CLI", () => {
     expect(after.exitCode).toBe(0);
     expect(JSON.parse(after.stdout).sources).toEqual([]);
   }, 45_000);
+
+  test("adds copied text and multiple URL sources", async () => {
+    const home = await createHome();
+    const loginResult = await runCli(
+      ["gnb", "auth", "login", "--timeout", "2"],
+      home,
+    );
+    expect(loginResult.exitCode).toBe(0);
+
+    const textResult = await runCli(
+      [
+        "gnb",
+        "notebook",
+        "source",
+        "add-text",
+        "Fixture copied text",
+        "--id",
+        "abc-123",
+        "--json",
+      ],
+      home,
+    );
+    expect(textResult.exitCode).toBe(0);
+    const textPayload = JSON.parse(textResult.stdout);
+    expect(textPayload.notebookId).toBe("abc-123");
+    expect(textPayload.sources).toEqual([
+      {
+        id: "source-3",
+        title: "Pasted text",
+        status: "ready",
+        removable: true,
+      },
+    ]);
+
+    const urlsResult = await runCli(
+      [
+        "gnb",
+        "notebook",
+        "source",
+        "add-urls",
+        "https://example.com/one",
+        "https://example.com/two",
+        "--id",
+        "abc-123",
+        "--json",
+      ],
+      home,
+    );
+    expect(urlsResult.exitCode).toBe(0);
+    const urlsPayload = JSON.parse(urlsResult.stdout);
+    expect(urlsPayload.inputUrls).toEqual([
+      "https://example.com/one",
+      "https://example.com/two",
+    ]);
+    expect(
+      urlsPayload.sources.map((source: { title: string }) => source.title),
+    ).toEqual([
+      "https://example.com/one",
+      "https://example.com/two",
+    ]);
+
+    const duplicateUrls = await runCli(
+      [
+        "gnb",
+        "notebook",
+        "source",
+        "add-urls",
+        "https://example.com/same",
+        "https://example.com/same",
+        "--id",
+        "abc-123",
+      ],
+      home,
+    );
+    expect(duplicateUrls.exitCode).toBe(2);
+    expect(duplicateUrls.stderr).toContain("Source URLs must be unique");
+
+    const invalidUrl = await runCli(
+      [
+        "gnb",
+        "notebook",
+        "source",
+        "add-urls",
+        "not-a-url",
+        "--id",
+        "abc-123",
+      ],
+      home,
+    );
+    expect(invalidUrl.exitCode).toBe(2);
+    expect(invalidUrl.stderr).toContain("Invalid source URL");
+  }, 35_000);
 });
