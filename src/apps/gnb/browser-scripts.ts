@@ -176,6 +176,173 @@ export const markCreateButtonScript = String.raw`
 })()
 `;
 
+export function markNotebookMenuButtonScript(notebookId: string): string {
+  return String.raw`
+/* aba:notebook-menu */
+(async () => {
+  const notebookId = ${JSON.stringify(notebookId)};
+  const notebookPath = "/notebook/" + notebookId;
+  const menuSelector =
+    'button[aria-label="Project Actions Menu"], button.project-button-more';
+  for (const element of document.querySelectorAll(
+    '[data-agent-browser-app-target="notebook-menu"]'
+  )) {
+    element.removeAttribute("data-agent-browser-app-target");
+  }
+
+  for (const anchor of document.querySelectorAll('a[href*="/notebook/"]')) {
+    try {
+      const url = new URL(anchor.getAttribute("href"), location.origin);
+      if (url.pathname !== notebookPath) continue;
+      const container =
+        anchor.closest("project-button, [role=listitem], article, tr[role=row]") ||
+        anchor;
+      const button = container.querySelector(menuSelector);
+      if (!button || button.hasAttribute("disabled")) return false;
+      button.scrollIntoView({ block: "center", inline: "nearest" });
+      button.setAttribute("data-agent-browser-app-target", "notebook-menu");
+      return true;
+    } catch {
+      // Continue to application-specific containers.
+    }
+  }
+
+  for (const card of document.querySelectorAll("project-button")) {
+    if (!card.outerHTML.includes(notebookId)) continue;
+    const button = card.querySelector(menuSelector);
+    if (!button || button.hasAttribute("disabled")) return false;
+    button.scrollIntoView({ block: "center", inline: "nearest" });
+    button.setAttribute("data-agent-browser-app-target", "notebook-menu");
+    return true;
+  }
+
+  const rows = Array.from(
+    document.querySelectorAll('tr[role="row"]')
+  ).filter((row) => row.querySelector('[role="cell"]'));
+  const originalPushState = history.pushState;
+  const originalReplaceState = history.replaceState;
+  let capturedPath = null;
+  history.pushState = function(_state, _title, url) {
+    capturedPath = String(url);
+    throw new Error("agent-browser-app navigation capture");
+  };
+  history.replaceState = function() {
+    throw new Error("agent-browser-app navigation rollback");
+  };
+  try {
+    for (const row of rows) {
+      capturedPath = null;
+      const listener = row.__zone_symbol__clickfalse?.[0]?.callback;
+      if (typeof listener !== "function") continue;
+      listener(new MouseEvent("click", {
+        bubbles: false,
+        cancelable: true
+      }));
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      let path = null;
+      try {
+        path = new URL(capturedPath, location.origin).pathname;
+      } catch {
+        // The row did not expose a notebook route.
+      }
+      if (path !== notebookPath) continue;
+      const button = row.querySelector(menuSelector);
+      if (!button || button.hasAttribute("disabled")) return false;
+      button.scrollIntoView({ block: "center", inline: "nearest" });
+      button.setAttribute("data-agent-browser-app-target", "notebook-menu");
+      return true;
+    }
+  } finally {
+    history.pushState = originalPushState;
+    history.replaceState = originalReplaceState;
+  }
+  return false;
+})()
+`;
+}
+
+export const markRemoveNotebookMenuItemScript = String.raw`
+/* aba:notebook-remove-menu-item */
+(() => {
+  const visible = (element) => {
+    const rect = element.getBoundingClientRect();
+    const style = getComputedStyle(element);
+    return rect.width > 0 && rect.height > 0 &&
+      style.visibility !== "hidden" && style.display !== "none";
+  };
+  const target = Array.from(
+    document.querySelectorAll('[role="menuitem"], button')
+  ).find((element) => {
+    const label = [
+      element.getAttribute("aria-label"),
+      element.textContent
+    ].filter(Boolean).join(" ").trim();
+    return visible(element) &&
+      (
+        element.matches(".delete-button") ||
+        /^(delete|remove)(\s+(delete|remove))?$/i.test(label)
+      );
+  });
+  if (!target) return false;
+  target.setAttribute(
+    "data-agent-browser-app-target",
+    "remove-notebook"
+  );
+  return true;
+})()
+`;
+
+export const markConfirmNotebookRemovalScript = String.raw`
+/* aba:notebook-remove-confirm */
+(() => {
+  const visible = (element) => {
+    const rect = element.getBoundingClientRect();
+    const style = getComputedStyle(element);
+    return rect.width > 0 && rect.height > 0 &&
+      style.visibility !== "hidden" && style.display !== "none";
+  };
+  const dialogs = Array.from(
+    document.querySelectorAll('[role="dialog"], mat-dialog-container')
+  ).filter((dialog) =>
+    /delete notebook everywhere|permanently deleted from all locations/i.test(
+      dialog.textContent || ""
+    )
+  );
+  const target = dialogs.flatMap((dialog) =>
+    Array.from(dialog.querySelectorAll("button"))
+  ).find((element) => {
+    const label = [
+      element.getAttribute("aria-label"),
+      element.textContent
+    ].filter(Boolean).join(" ").trim();
+    return visible(element) && /^(delete|remove)$/i.test(label);
+  });
+  if (!target) return false;
+  target.setAttribute(
+    "data-agent-browser-app-target",
+    "confirm-notebook-removal"
+  );
+  return true;
+})()
+`;
+
+export const notebookRemovalSettledScript = String.raw`
+/* aba:notebook-removal-settled */
+(() => {
+  const visible = (element) => {
+    const rect = element.getBoundingClientRect();
+    const style = getComputedStyle(element);
+    return rect.width > 0 && rect.height > 0 &&
+      style.visibility !== "hidden" && style.display !== "none";
+  };
+  return !Array.from(
+    document.querySelectorAll(
+      '[role="dialog"], mat-dialog-container, .cdk-overlay-backdrop-showing'
+    )
+  ).some(visible);
+})()
+`;
+
 export const readNotebookScript = String.raw`
 /* aba:notebook-read */
 (() => {

@@ -10,12 +10,16 @@ import type { Account } from "../../registry.ts";
 import {
   detectAccountEmailScript,
   listNotebooksScript,
+  markConfirmNotebookRemovalScript,
   markCreateButtonScript,
   markConfirmSourceRemovalScript,
+  markNotebookMenuButtonScript,
   markOnboardingButtonScript,
   markQueryInputScript,
+  markRemoveNotebookMenuItemScript,
   markRemoveSourceMenuItemScript,
   markSourceMenuButtonScript,
+  notebookRemovalSettledScript,
   markUploadButtonScript,
   readChatStateScript,
   readNotebookScript,
@@ -238,6 +242,151 @@ export async function createNotebook(
       );
     }
     return { id: match[1], url: `https://notebooklm.google.com/notebook/${match[1]}` };
+  });
+}
+
+function notebookId(target: string): string | undefined {
+  return directNotebookUrl(target)?.match(NOTEBOOK_URL_PATTERN)?.[1];
+}
+
+export async function removeNotebooks(
+  account: Account,
+  notebookIds: string[],
+  headed: boolean,
+): Promise<{
+  removed: NotebookSummary[];
+}> {
+  const requestedIds = Array.from(
+    new Set(
+      notebookIds.map((target) => {
+        const id = notebookId(target);
+        if (!id) {
+          throw new CliError(`Invalid Gemini Notebook ID or URL: ${target}.`);
+        }
+        return id;
+      }),
+    ),
+  );
+  if (requestedIds.length === 0) {
+    throw new CliError(
+      "notebook remove requires at least one notebook ID.",
+      2,
+    );
+  }
+
+  return runAuthenticated(account, async (browser) => {
+    await browser.open(NOTEBOOK_HOME_URL, headed);
+    assertAuthenticated(await browser.currentUrl());
+    const initial = await waitUntil<ListResult>(
+      () => browser.eval<ListResult>(listNotebooksScript),
+      (value) =>
+        value.loginRequired || value.ready || value.notebooks.length > 0,
+      20_000,
+    );
+    if (initial.loginRequired) {
+      throw new CliError(
+        "Google authentication has expired. Run: agent-browser-app gnb auth login",
+      );
+    }
+    const targets = requestedIds.map((id) => {
+      const notebook = initial.notebooks.find((candidate) => candidate.id === id);
+      if (!notebook) {
+        throw new CliError(
+          `Unknown notebook ID "${id}". Run notebook list again and use an ID from the current output.`,
+        );
+      }
+      return notebook;
+    });
+
+    for (const target of targets) {
+      await browser.open(NOTEBOOK_HOME_URL, headed);
+      assertAuthenticated(await browser.currentUrl());
+      const current = await waitUntil<ListResult>(
+        () => browser.eval<ListResult>(listNotebooksScript),
+        (value) =>
+          value.loginRequired ||
+          value.notebooks.some((notebook) => notebook.id === target.id),
+        20_000,
+      );
+      if (current.loginRequired) {
+        throw new CliError(
+          "Google authentication has expired. Run: agent-browser-app gnb auth login",
+        );
+      }
+      if (!current.notebooks.some((notebook) => notebook.id === target.id)) {
+        throw new CliError(
+          `Gemini Notebook did not reload notebook "${target.id}" before removal.`,
+        );
+      }
+      const menuMarked = await browser.eval<boolean>(
+        markNotebookMenuButtonScript(target.id),
+      );
+      if (!menuMarked) {
+        throw new CliError(
+          `Could not open the menu for notebook "${target.id}".`,
+        );
+      }
+      await browser.click(
+        '[data-agent-browser-app-target="notebook-menu"]',
+      );
+      const removeMarked = await waitUntil(
+        () => browser.eval<boolean>(markRemoveNotebookMenuItemScript),
+        Boolean,
+        10_000,
+        250,
+      );
+      if (!removeMarked) {
+        throw new CliError(
+          `Could not find the remove action for notebook "${target.id}".`,
+        );
+      }
+      await browser.click(
+        '[data-agent-browser-app-target="remove-notebook"]',
+      );
+      const confirmMarked = await waitUntil(
+        () => browser.eval<boolean>(markConfirmNotebookRemovalScript),
+        Boolean,
+        10_000,
+        250,
+      );
+      if (!confirmMarked) {
+        throw new CliError(
+          `Gemini Notebook did not show a removal confirmation for notebook "${target.id}".`,
+        );
+      }
+      await browser.click(
+        '[data-agent-browser-app-target="confirm-notebook-removal"]',
+      );
+      const settled = await waitUntil(
+        () => browser.eval<boolean>(notebookRemovalSettledScript),
+        Boolean,
+        10_000,
+        250,
+      );
+      if (!settled) {
+        throw new CliError(
+          `Gemini Notebook did not finish closing the removal dialog for notebook "${target.id}".`,
+        );
+      }
+      const remaining = await waitUntil<ListResult>(
+        () => browser.eval<ListResult>(listNotebooksScript),
+        (value) =>
+          value.ready &&
+          !value.notebooks.some((notebook) => notebook.id === target.id),
+        20_000,
+        500,
+      );
+      if (
+        !remaining.ready ||
+        remaining.notebooks.some((notebook) => notebook.id === target.id)
+      ) {
+        throw new CliError(
+          `Gemini Notebook did not remove notebook "${target.id}".`,
+        );
+      }
+    }
+
+    return { removed: targets };
   });
 }
 

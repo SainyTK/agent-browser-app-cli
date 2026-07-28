@@ -62,6 +62,7 @@ describe("agent-browser-app CLI", () => {
 
     expect(help.exitCode).toBe(0);
     expect(help.stdout).toContain("agent-browser-app gnb auth login");
+    expect(help.stdout).toContain("agent-browser-app gnb notebook remove");
     expect(help.stdout).toContain(
       "agent-browser-app gnb notebook source list",
     );
@@ -232,6 +233,88 @@ describe("agent-browser-app CLI", () => {
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("auth login");
   });
+
+  test("validates and removes multiple notebooks by ID", async () => {
+    const home = await createHome();
+    const loginResult = await runCli(
+      ["gnb", "auth", "login", "--timeout", "2"],
+      home,
+    );
+    expect(loginResult.exitCode).toBe(0);
+
+    const missingIds = await runCli(
+      [
+        "gnb",
+        "notebook",
+        "remove",
+        "untitled-1",
+        "missing-notebook",
+        "--json",
+      ],
+      home,
+    );
+    expect(missingIds.exitCode).toBe(1);
+    expect(missingIds.stderr).toContain(
+      'Unknown notebook ID "missing-notebook"',
+    );
+
+    const unchanged = await runCli(
+      ["gnb", "notebook", "list", "--json"],
+      home,
+    );
+    expect(
+      JSON.parse(unchanged.stdout).notebooks.map(
+        (notebook: { id: string }) => notebook.id,
+      ),
+    ).toContain("untitled-1");
+
+    const removed = await runCli(
+      [
+        "gnb",
+        "notebook",
+        "remove",
+        "untitled-1",
+        "untitled-2",
+        "untitled-1",
+        "--json",
+      ],
+      home,
+    );
+    expect(removed.exitCode).toBe(0);
+    expect(
+      JSON.parse(removed.stdout).removed.map(
+        (notebook: { id: string }) => notebook.id,
+      ),
+    ).toEqual(["untitled-1", "untitled-2"]);
+
+    const humanRemoved = await runCli(
+      ["gnb", "notebook", "delete", "untitled-3"],
+      home,
+    );
+    expect(humanRemoved.exitCode).toBe(0);
+    expect(humanRemoved.stdout).toContain(
+      "Removed untitled-3\tUntitled notebook",
+    );
+
+    const after = await runCli(
+      ["gnb", "notebook", "list", "--json"],
+      home,
+    );
+    expect(
+      JSON.parse(after.stdout).notebooks.map(
+        (notebook: { id: string }) => notebook.id,
+      ),
+    ).toEqual(["abc-123"]);
+
+    const missingArgument = await runCli(
+      ["gnb", "notebook", "remove"],
+      home,
+    );
+    expect(missingArgument.exitCode).toBe(2);
+    expect(missingArgument.stderr).toContain(
+      "notebook remove requires at least one notebook ID",
+    );
+  }, 40_000);
 
   test("lists and removes multiple notebook sources", async () => {
     const home = await createHome();
