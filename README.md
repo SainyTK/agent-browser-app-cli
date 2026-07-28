@@ -1,6 +1,7 @@
 # agent-browser-app
 
 `agent-browser-app` provides small, stable commands for authenticated web applications.
+It is also installed as `aba`, a shorter alias that supports the same commands and options.
 It delegates browser work to [agent-browser](https://github.com/vercel-labs/agent-browser) and keeps the underlying browser available for inspection when authentication requires a real user.
 
 The first application adapter is Gemini Notebook, formerly NotebookLM.
@@ -42,19 +43,23 @@ bun install
 bun link
 ```
 
-Verify both commands are available:
+Verify agent-browser and both names for this CLI are available:
 
 ```bash
 agent-browser --version
 agent-browser-app --version
+aba --version
 ```
+
+The examples below use `aba`.
+Replace it with `agent-browser-app` if you prefer the full name.
 
 ## Authenticate
 
 Start a headed Chrome session and complete Google sign-in:
 
 ```bash
-agent-browser-app gnb auth login
+aba gnb auth login
 ```
 
 The CLI waits for the browser to return to Gemini Notebook, saves `state.json`, and records the detected account email when the page exposes it.
@@ -62,14 +67,14 @@ The CLI waits for the browser to return to Gemini Notebook, saves `state.json`, 
 To add or refresh a specific account:
 
 ```bash
-agent-browser-app gnb auth login --account you@example.com
+aba gnb auth login --account you@example.com
 ```
 
 List accounts and select the default account:
 
 ```bash
-agent-browser-app gnb auth list
-agent-browser-app gnb auth switch you@example.com
+aba gnb auth list
+aba gnb auth switch you@example.com
 ```
 
 Account selectors accept an email address or the ID displayed by `auth list`.
@@ -80,26 +85,26 @@ Notebook commands also accept `--account <email-or-id>`.
 List notebooks visible to the active account:
 
 ```bash
-agent-browser-app gnb notebook list
-agent-browser-app gnb notebook list --account you@example.com
+aba gnb notebook list
+aba gnb notebook list --account you@example.com
 ```
 
 Create an empty notebook and print its URL:
 
 ```bash
-agent-browser-app gnb notebook create
+aba gnb notebook create
 ```
 
 Read visible notebook metadata:
 
 ```bash
-agent-browser-app gnb notebook read <notebook-id-or-url>
+aba gnb notebook read <notebook-id-or-url>
 ```
 
 Ask a notebook a question:
 
 ```bash
-agent-browser-app gnb notebook ask "What are the main findings?" \
+aba gnb notebook ask "What are the main findings?" \
   --id "notebook-id-or-url"
 ```
 
@@ -108,7 +113,7 @@ Use `--timeout <seconds>` to override the answer wait.
 Upload a local file as a source:
 
 ```bash
-agent-browser-app gnb notebook upload "/path/to/source.m4a" \
+aba gnb notebook upload "/path/to/source.m4a" \
   --id "notebook-id-or-url"
 ```
 
@@ -118,14 +123,14 @@ Use `--timeout <seconds>` to override the 30-minute processing timeout.
 List sources and their current IDs:
 
 ```bash
-agent-browser-app gnb notebook source list \
+aba gnb notebook source list \
   --id "notebook-id-or-url"
 ```
 
 Remove one or more sources:
 
 ```bash
-agent-browser-app gnb notebook source remove source-2 source-4 \
+aba gnb notebook source remove source-2 source-4 \
   --id "notebook-id-or-url"
 ```
 
@@ -157,10 +162,10 @@ Tests run the complete CLI process against a deterministic fake agent-browser bi
 Real authenticated verification still requires a user-controlled Google login:
 
 ```bash
-agent-browser-app gnb auth login
-agent-browser-app gnb auth list
-agent-browser-app gnb notebook list
-agent-browser-app gnb notebook ask "question" --id "notebook-id-or-url"
+aba gnb auth login
+aba gnb auth list
+aba gnb notebook list
+aba gnb notebook ask "question" --id "notebook-id-or-url"
 ```
 
 Gemini Notebook is an external application without a public browser-automation contract.
