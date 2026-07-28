@@ -1,0 +1,21 @@
+{
+  "name": "agent-browser-app",
+  "version": "0.1.0",
+  "description": "Reliable authenticated application workflows powered by agent-browser",
+  "type": "module",
+  "bin": {
+    "agent-browser-app": "./src/cli.ts"
+  },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "bun test",
+    "verify": "bun run check && bun test"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.12",
+    "typescript": "^5.9.3"
+  },
+  "engines": {
+    "bun": ">=1.3.0"
+  }
+}
