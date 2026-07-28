@@ -284,7 +284,14 @@ describe("agent-browser-app CLI", () => {
     );
 
     const loginResult = await runCli(
-      ["reddit", "auth", "login", "--timeout", "2"],
+      [
+        "reddit",
+        "auth",
+        "login",
+        "--agent-browser",
+        "--timeout",
+        "2",
+      ],
       home,
     );
     expect(loginResult.exitCode).toBe(0);
@@ -334,6 +341,12 @@ describe("agent-browser-app CLI", () => {
       "First fixture post (r/agentbrowser)",
     );
     expect(feedTextResult.stdout).toContain("score=42 comments=7");
+
+    const headlessFeedResult = await runCli(
+      ["reddit", "feed", "--limit", "1", "--headless", "--json"],
+      home,
+    );
+    expect(headlessFeedResult.exitCode).toBe(0);
 
     const profileResult = await runCli(
       [
@@ -401,6 +414,18 @@ describe("agent-browser-app CLI", () => {
         );
       }),
     ).toBe(true);
+    const redditPageInvocations = invocations.filter((candidate) =>
+      candidate.includes("https://www.reddit.com/") ||
+      candidate.includes("https://www.reddit.com/user/spez/")
+    );
+    expect(redditPageInvocations.some((invocation) => {
+      const headedIndex = invocation.indexOf("--headed");
+      return headedIndex >= 0 && invocation[headedIndex + 1] === "true";
+    })).toBe(true);
+    expect(redditPageInvocations.some((invocation) => {
+      const headedIndex = invocation.indexOf("--headed");
+      return headedIndex >= 0 && invocation[headedIndex + 1] === "false";
+    })).toBe(true);
   }, 20_000);
 
   test("validates Reddit command arguments and options", async () => {
@@ -440,9 +465,33 @@ describe("agent-browser-app CLI", () => {
     );
     expect(predeclaredAccount.exitCode).toBe(2);
     expect(predeclaredAccount.stderr).toContain("Unknown option: --account");
+
+    const conflictingLoginBrowsers = await runCli(
+      [
+        "reddit",
+        "auth",
+        "login",
+        "--agent-browser",
+        "--system-browser",
+      ],
+      home,
+    );
+    expect(conflictingLoginBrowsers.exitCode).toBe(2);
+    expect(conflictingLoginBrowsers.stderr).toContain(
+      "only one of --agent-browser or --system-browser",
+    );
+
+    const conflictingFeedBrowsers = await runCli(
+      ["reddit", "feed", "--headed", "--headless"],
+      home,
+    );
+    expect(conflictingFeedBrowsers.exitCode).toBe(2);
+    expect(conflictingFeedBrowsers.stderr).toContain(
+      "only one of --headed or --headless",
+    );
   });
 
-  test("bootstraps Reddit login in an isolated system browser", async () => {
+  test("defaults Reddit login to an isolated system browser", async () => {
     const home = await createHome();
     const systemBrowserLog = join(home, "fake-system-browser.jsonl");
     const systemBrowserDone = join(home, "fake-system-browser.done");
@@ -452,7 +501,6 @@ describe("agent-browser-app CLI", () => {
         "reddit",
         "auth",
         "login",
-        "--system-browser",
         "--timeout",
         "2",
       ],

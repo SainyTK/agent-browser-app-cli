@@ -51,6 +51,8 @@ function parseOptions(args: string[]): ParsedOptions {
   const values = new Map<string, string | boolean>();
   const positionals: string[] = [];
   const booleanOptions = new Set([
+    "agent-browser",
+    "headless",
     "json",
     "headed",
     "help",
@@ -162,10 +164,10 @@ Usage:
   agent-browser-app x auth list [--json]
   agent-browser-app x feed [--limit <count>] [--account <handle-or-id>] [--headed] [--json]
   agent-browser-app x profile <url-or-id> [--account <handle-or-id>] [--headed] [--json]
-  agent-browser-app reddit auth login [--timeout <seconds>] [--system-browser]
+  agent-browser-app reddit auth login [--timeout <seconds>] [--agent-browser]
   agent-browser-app reddit auth list [--json]
-  agent-browser-app reddit feed [--limit <count>] [--account <username-or-id>] [--headed] [--json]
-  agent-browser-app reddit profile <url-or-username> [--account <username-or-id>] [--headed] [--json]
+  agent-browser-app reddit feed [--limit <count>] [--account <username-or-id>] [--headless] [--json]
+  agent-browser-app reddit profile <url-or-username> [--account <username-or-id>] [--headless] [--json]
 
 Executable aliases:
   agent-browser-app, aba
@@ -439,7 +441,7 @@ async function handleRedditAuth(
   if (command === "login") {
     assertAllowedOptions(
       options,
-      new Set(["system-browser", "timeout"]),
+      new Set(["agent-browser", "system-browser", "timeout"]),
     );
     if (options.positionals.length > 0) {
       throw new CliError(
@@ -447,9 +449,18 @@ async function handleRedditAuth(
         2,
       );
     }
+    if (
+      hasFlag(options, "agent-browser") &&
+      hasFlag(options, "system-browser")
+    ) {
+      throw new CliError(
+        "Reddit login accepts only one of --agent-browser or --system-browser.",
+        2,
+      );
+    }
     const account = await registry.accountForDiscoveredLogin();
     const timeoutSeconds = numberOption(options, "timeout", 600);
-    const systemBrowser = hasFlag(options, "system-browser");
+    const systemBrowser = !hasFlag(options, "agent-browser");
     console.log(
       `Opening ${
         systemBrowser ? "system Google Chrome" : "headed Chrome"
@@ -564,7 +575,7 @@ async function handleRedditFeed(
   const options = parseOptions(args);
   assertAllowedOptions(
     options,
-    new Set(["account", "headed", "json", "limit"]),
+    new Set(["account", "headed", "headless", "json", "limit"]),
   );
   if (options.positionals.length > 0) {
     throw new CliError(
@@ -573,11 +584,17 @@ async function handleRedditFeed(
     );
   }
   const limit = positiveIntegerOption(options, "limit", 20);
+  if (hasFlag(options, "headed") && hasFlag(options, "headless")) {
+    throw new CliError(
+      "Reddit feed accepts only one of --headed or --headless.",
+      2,
+    );
+  }
   const account = await registry.resolve(stringOption(options, "account"));
   const posts = await readRedditFeed(
     account,
     limit,
-    hasFlag(options, "headed"),
+    !hasFlag(options, "headless"),
   );
   if (hasFlag(options, "json")) {
     printJson({
@@ -605,7 +622,10 @@ async function handleRedditProfile(
   args: string[],
 ): Promise<void> {
   const options = parseOptions(args);
-  assertAllowedOptions(options, new Set(["account", "headed", "json"]));
+  assertAllowedOptions(
+    options,
+    new Set(["account", "headed", "headless", "json"]),
+  );
   const target = options.positionals[0];
   if (!target) {
     throw new CliError(
@@ -620,11 +640,17 @@ async function handleRedditProfile(
     );
   }
   resolveRedditProfileUrl(target);
+  if (hasFlag(options, "headed") && hasFlag(options, "headless")) {
+    throw new CliError(
+      "Reddit profile accepts only one of --headed or --headless.",
+      2,
+    );
+  }
   const account = await registry.resolve(stringOption(options, "account"));
   const profile = await readRedditProfile(
     account,
     target,
-    hasFlag(options, "headed"),
+    !hasFlag(options, "headless"),
   );
   if (hasFlag(options, "json")) {
     printJson(profile);

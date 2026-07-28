@@ -304,23 +304,22 @@ It does not call private X APIs.
 
 ## Reddit authentication
 
-Start a headed Chrome session and complete Reddit sign-in:
+Start an isolated system Chrome session and complete Reddit sign-in:
 
 ```bash
 agent-browser-app reddit auth login
 ```
 
-The CLI opens Reddit's browser login page, waits for an authenticated page, saves the resulting agent-browser storage state, and records the detected username.
-Reddit may present an automated-traffic verification page to software-controlled Chrome.
-Use the system-browser bootstrap when that happens:
+The CLI uses normal system Chrome by default because Reddit may challenge software-controlled Chrome.
+It opens Reddit's login page in an isolated profile, waits for an authenticated page, saves the resulting agent-browser storage state, and records the detected username.
+The isolated browser closes automatically after authentication is captured.
+For development environments that cannot launch system Chrome, use agent-browser explicitly:
 
 ```bash
-agent-browser-app reddit auth login --system-browser
+agent-browser-app reddit auth login --agent-browser
 ```
 
-This opens normal Google Chrome with an isolated Reddit profile.
-Complete sign-in and wait for an authenticated Reddit page.
-The CLI attaches agent-browser to that Chrome instance, saves `state.json`, and closes the isolated browser automatically.
+The former `--system-browser` option remains accepted for compatibility but is no longer required.
 
 List configured Reddit accounts:
 
@@ -344,7 +343,9 @@ agent-browser-app reddit feed --limit 10
 agent-browser-app reddit feed --limit 10 --json
 ```
 
-The default limit is 20.
+Reddit `feed` and `profile` commands open a visible Chrome window by default because Reddit commonly challenges headless browsers.
+Use `--headless` only in an environment where Reddit accepts headless browsing.
+The default feed limit is 20.
 The adapter accumulates posts while scrolling the browser-rendered home feed and stops at the requested limit or when no additional posts load.
 Post output includes the post ID and URL, subreddit, author, title and text, creation time, outbound content URL, score, comment count, and content labels when Reddit exposes them.
 
@@ -359,7 +360,7 @@ agent-browser-app reddit profile https://www.reddit.com/user/spez/ --json
 Profile URLs from the current, old, new, mobile, and non-participation Reddit hosts are accepted and normalized to `www.reddit.com`.
 Profile output includes the account ID when exposed, username, display name, bio, creation time, available karma counts, follower count, and public admin or moderator labels.
 
-Use `--headed` on `feed` or `profile` when debugging a Reddit interface change.
+The former `--headed` option remains accepted for compatibility but is no longer required.
 Use `--json` for machine-readable output.
 
 Reddit workflows stay browser-driven.
@@ -400,7 +401,7 @@ aba x auth login
 aba x auth list
 aba x feed --limit 5
 aba x profile OpenAI
-aba reddit auth login --system-browser
+aba reddit auth login
 aba reddit auth list
 aba reddit feed --limit 5
 aba reddit profile spez
@@ -408,4 +409,4 @@ aba reddit profile spez
 
 Gemini Notebook, X, and Reddit are external applications without public browser-automation contracts.
 The adapters favor semantic metadata, accessibility labels, and URL semantics, then fall back to known component selectors.
-If an interface changes, rerun the failed command with `--headed` and update the scripts under the corresponding `src/apps/<app>/` directory.
+If an interface changes, inspect the visible browser and update the scripts under the corresponding `src/apps/<app>/` directory.

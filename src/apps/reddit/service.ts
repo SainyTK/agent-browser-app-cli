@@ -143,7 +143,7 @@ function expiredAuthenticationError(): CliError {
 
 function blockedError(): CliError {
   return new CliError(
-    "Reddit requested browser verification. Retry with --headed, or refresh authentication with: agent-browser-app reddit auth login --system-browser",
+    "Reddit requested browser verification. Retry without --headless, or refresh authentication with: agent-browser-app reddit auth login",
   );
 }
 
@@ -166,7 +166,7 @@ export async function login(
     );
     if (state.blocked) {
       throw new CliError(
-        "Reddit blocked the automated login browser with a verification page. Retry the same command with --system-browser.",
+        "Reddit blocked the automated login browser with a verification page. Retry without --agent-browser.",
       );
     }
     if (!state.authenticated) {
