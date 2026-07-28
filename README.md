@@ -3,8 +3,9 @@
 `agent-browser-app` provides small, stable commands for authenticated web applications.
 It delegates browser work to [agent-browser](https://github.com/vercel-labs/agent-browser) and keeps the underlying browser available for inspection when authentication requires a real user.
 
-The first application adapter is Gemini Notebook, formerly NotebookLM.
-The accepted application names are `gnb`, `gemini-notebook`, and `notebooklm`.
+The included application adapters are Gemini Notebook, formerly NotebookLM, and X, formerly Twitter.
+Gemini Notebook accepts `gnb`, `gemini-notebook`, and `notebooklm`.
+X accepts `x` and `twitter`.
 
 ## Why this exists
 
@@ -12,15 +13,22 @@ Google and social applications can reject automation that arrives with a fresh b
 A profile directory preserves the browser fingerprint, cache, IndexedDB, service workers, and persistent cookies.
 A separate storage-state file preserves cookies and web storage that may otherwise disappear between browser restarts.
 
-This CLI always uses both:
+Each application keeps its accounts separate while using both:
 
 ```text
-~/.agent-browser/apps/agent-browser-app/gnb/
-|-- accounts.json
-`-- accounts/
-    `-- default/
-        |-- browser-profile/
-        `-- state.json
+~/.agent-browser/apps/agent-browser-app/
+|-- gnb/
+|   |-- accounts.json
+|   `-- accounts/
+|       `-- default/
+|           |-- browser-profile/
+|           `-- state.json
+`-- x/
+    |-- accounts.json
+    `-- accounts/
+        `-- default/
+            |-- browser-profile/
+            `-- state.json
 ```
 
 The files remain compatible with agent-browser because the wrapper invokes its native `--profile`, `state load`, and `state save` interfaces.
@@ -136,7 +144,7 @@ The command validates every requested ID before it removes any source.
 Use `--headed` on a notebook command when debugging a UI change.
 Use `--json` for machine-readable output.
 
-## Authentication behavior
+## Gemini Notebook authentication behavior
 
 Login runs in headed mode because Google may require manual account selection, passkeys, or two-factor authentication.
 Normal notebook operations run headless by default.
@@ -147,6 +155,77 @@ Normal notebook operations treat the known-good login state as read-only so a sh
 The wrapper never reads or prints cookie values.
 It only stores account metadata in `accounts.json`.
 
+## X authentication
+
+Start a headed Chrome session and complete X sign-in:
+
+```bash
+agent-browser-app x auth login
+```
+
+The CLI opens X's browser login flow and waits for the authenticated home feed.
+It saves the resulting agent-browser storage state and records the detected username when X exposes the profile navigation link.
+
+Google can reject sign-in when its OAuth page detects software-controlled Chrome.
+Use the system-browser bootstrap when signing in to X through Google:
+
+```bash
+agent-browser-app x auth login --system-browser
+```
+
+This opens normal Google Chrome with the same isolated account profile.
+Complete X sign-in and wait for the X home feed.
+The CLI attaches agent-browser to that authenticated Chrome instance, saves `state.json`, and closes the isolated browser automatically.
+
+To add or refresh a specific account:
+
+```bash
+agent-browser-app x auth login --account @username
+```
+
+List configured X accounts:
+
+```bash
+agent-browser-app x auth list
+agent-browser-app x auth list --json
+```
+
+The most recently authenticated account is active.
+X commands accept `--account <handle-or-id>` when more than one account is configured.
+
+## X commands
+
+Read posts from the authenticated home feed:
+
+```bash
+agent-browser-app x feed
+agent-browser-app x feed --limit 10
+agent-browser-app x feed --limit 10 --json
+```
+
+The default limit is 20.
+The adapter accumulates posts while scrolling the browser-rendered home timeline and stops at the requested limit or when no additional posts load.
+
+Read an X profile by username, handle, numeric user ID, or profile URL:
+
+```bash
+agent-browser-app x profile OpenAI
+agent-browser-app x profile @OpenAI
+agent-browser-app x profile 4398626122
+agent-browser-app x profile https://x.com/OpenAI --json
+```
+
+Twitter profile URLs are accepted and normalized to X.
+Numeric user IDs use X's browser profile route and resolve to the current username.
+Profile output includes the numeric user ID when X exposes it, the username, display name, bio, public profile fields, exact schema-provided counts, and verification and protection status.
+
+Use `--headed` on `feed` or `profile` when debugging an X interface change.
+Use `--json` for machine-readable output.
+
+X workflows stay browser-driven.
+The adapter reads semantic HTML, schema.org metadata, accessible labels, and visible client-side elements from the rendered page.
+It does not call private X APIs.
+
 ## Development
 
 ```bash
@@ -154,15 +233,19 @@ bun run verify
 ```
 
 Tests run the complete CLI process against a deterministic fake agent-browser binary.
-Real authenticated verification still requires a user-controlled Google login:
+Real authenticated verification still requires a user-controlled login:
 
 ```bash
 agent-browser-app gnb auth login
 agent-browser-app gnb auth list
 agent-browser-app gnb notebook list
 agent-browser-app gnb notebook ask "question" --id "notebook-id-or-url"
+agent-browser-app x auth login
+agent-browser-app x auth list
+agent-browser-app x feed --limit 5
+agent-browser-app x profile OpenAI
 ```
 
-Gemini Notebook is an external application without a public browser-automation contract.
-The adapter favors accessibility labels and URL semantics, then falls back to known component selectors.
-If Google changes the interface, rerun the failed command with `--headed` and update the selectors in `src/apps/gnb/browser-scripts.ts`.
+Gemini Notebook and X are external applications without public browser-automation contracts.
+The adapters favor semantic metadata, accessibility labels, and URL semantics, then fall back to known component selectors.
+If an interface changes, rerun the failed command with `--headed` and update the scripts under the corresponding `src/apps/<app>/` directory.

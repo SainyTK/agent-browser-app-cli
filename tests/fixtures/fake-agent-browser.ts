@@ -66,6 +66,7 @@ function commandIndex(): number {
     "fill",
     "press",
     "state",
+    "tab",
     "close",
   ]);
   return args.findIndex((value) => commands.has(value));
@@ -76,7 +77,22 @@ const command = args[index];
 const rest = args.slice(index + 1);
 const state = await readState();
 
-if (command === "open") {
+if (command === "tab" && (!rest[0] || rest[0] === "list")) {
+  output({
+    tabs: [
+      {
+        active: true,
+        label: null,
+        tabId: "t1",
+        title: "Home / X",
+        type: "page",
+        url: "https://x.com/home",
+      },
+    ],
+  });
+} else if (command === "tab") {
+  output({ active: rest[0] });
+} else if (command === "open") {
   state.url = rest[0] || "https://notebooklm.google.com/";
   await saveState(state);
   output({ title: "Gemini Notebook", url: state.url });
@@ -85,7 +101,105 @@ if (command === "open") {
 } else if (command === "eval") {
   const encoded = rest[rest.indexOf("-b") + 1];
   const script = Buffer.from(encoded, "base64").toString("utf8");
-  if (script.includes("aba:account-email")) {
+  if (script.includes("aba:x-auth-state")) {
+    output({
+      result: {
+        authenticated: true,
+        loginRequired: false,
+        googleRejected: false,
+        username: "fixture_user",
+        url: "https://x.com/home",
+      },
+    });
+  } else if (script.includes("aba:x-feed-scroll")) {
+    output({ result: { before: 0, after: 600 } });
+  } else if (script.includes("aba:x-feed")) {
+    output({
+      result: {
+        loginRequired: false,
+        ready: true,
+        tweets: [
+          {
+            id: "2081000000000000001",
+            url: "https://x.com/first_user/status/2081000000000000001",
+            author: {
+              id: "101",
+              name: "First User",
+              username: "first_user",
+            },
+            text: "First fixture post",
+            createdAt: "2026-07-28T01:00:00.000Z",
+            metrics: {
+              replies: 1,
+              reposts: 2,
+              quotes: 3,
+              likes: 4,
+              views: 5,
+            },
+          },
+          {
+            id: "2081000000000000002",
+            url: "https://x.com/second_user/status/2081000000000000002",
+            author: {
+              id: "102",
+              name: "Second User",
+              username: "second_user",
+            },
+            text: "Second fixture post",
+            createdAt: "2026-07-28T02:00:00.000Z",
+            metrics: {
+              replies: null,
+              reposts: null,
+              quotes: null,
+              likes: 8,
+              views: 13,
+            },
+          },
+          {
+            id: "2081000000000000003",
+            url: "https://x.com/third_user/status/2081000000000000003",
+            author: {
+              id: "103",
+              name: "Third User",
+              username: "third_user",
+            },
+            text: "Third fixture post",
+            createdAt: null,
+            metrics: {
+              replies: null,
+              reposts: null,
+              quotes: null,
+              likes: null,
+              views: null,
+            },
+          },
+        ],
+      },
+    });
+  } else if (script.includes("aba:x-profile")) {
+    output({
+      result: {
+        loginRequired: false,
+        unavailableMessage: null,
+        ready: true,
+        profile: {
+          id: "4398626122",
+          username: "OpenAI",
+          name: "OpenAI",
+          bio: "Fixture profile",
+          location: "San Francisco",
+          website: "https://openai.com",
+          joinedAt: "2015-12-06T22:51:08.930Z",
+          verified: true,
+          protected: false,
+          posts: 2016,
+          following: 4,
+          followers: 5062117,
+          url: "https://x.com/OpenAI",
+        },
+      },
+    });
+  } else if (script.includes("aba:account-email")) {
     output({ result: "test@example.com" });
   } else if (script.includes("aba:notebook-list")) {
     output({
@@ -201,6 +315,11 @@ if (command === "open") {
     JSON.stringify({ cookies: [], origins: [] }),
     { mode: 0o600 },
   );
+  const systemBrowserDone = process.env.FAKE_SYSTEM_BROWSER_DONE;
+  if (systemBrowserDone) {
+    await mkdir(dirname(systemBrowserDone), { recursive: true });
+    await writeFile(systemBrowserDone, "done");
+  }
   output({ path: destination });
 } else if (command === "state" && rest[0] === "load") {
   output({ loaded: true, path: rest[1] });

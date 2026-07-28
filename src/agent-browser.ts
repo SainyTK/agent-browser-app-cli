@@ -16,17 +16,52 @@ interface RunOptions {
   timeoutMs?: number;
 }
 
+interface BrowserTab {
+  active: boolean;
+  label: string | null;
+  tabId: string;
+  title: string;
+  type: string;
+  url: string;
+}
+
+function processErrorMessage(
+  stdout: string,
+  stderr: string,
+): string | undefined {
+  for (const output of [stderr, stdout]) {
+    const trimmed = output.trim();
+    if (!trimmed) {
+      continue;
+    }
+    try {
+      const parsed = JSON.parse(trimmed) as {
+        error?: unknown;
+      };
+      if (typeof parsed.error === "string" && parsed.error.trim()) {
+        return parsed.error.trim();
+      }
+    } catch {
+      // Use the original process output when it is not JSON.
+    }
+    return trimmed;
+  }
+  return undefined;
+}
+
 export class AgentBrowser {
   readonly sessionName: string;
   private readonly binary: string;
+  private cdpPort: number | undefined;
   private headed = false;
 
   constructor(
     private readonly account: Account,
+    appId = "gnb",
     environment: NodeJS.ProcessEnv = process.env,
   ) {
     this.binary = environment.AGENT_BROWSER_BIN?.trim() || "agent-browser";
-    this.sessionName = `agent-browser-app-gnb-${account.id}`;
+    this.sessionName = `agent-browser-app-${appId}-${account.id}`;
   }
 
   async open(url: string, headed = false): Promise<void> {
@@ -44,6 +79,23 @@ export class AgentBrowser {
   async currentUrl(): Promise<string> {
     const data = await this.runJson<{ url: string }>(["get", "url"]);
     return data.url;
+  }
+
+  async attach(cdpPort: number): Promise<void> {
+    this.cdpPort = cdpPort;
+    await this.currentUrl();
+  }
+
+  async listTabs(): Promise<BrowserTab[]> {
+    const data = await this.runJson<{ tabs: BrowserTab[] }>([
+      "tab",
+      "list",
+    ]);
+    return data.tabs;
+  }
+
+  async switchTab(tabId: string): Promise<void> {
+    await this.runJson(["tab", tabId]);
   }
 
   async eval<T>(script: string): Promise<T> {
@@ -95,6 +147,14 @@ export class AgentBrowser {
   }
 
   private async globalArgs(headed?: boolean): Promise<string[]> {
+    if (this.cdpPort !== undefined) {
+      return [
+        "--session",
+        this.sessionName,
+        "--cdp",
+        String(this.cdpPort),
+      ];
+    }
     const effectiveHeaded = headed ?? this.headed;
     const args = [
       "--session",
@@ -172,8 +232,7 @@ export class AgentBrowser {
       ).text();
       if (exitCode !== 0) {
         throw new CliError(
-          stderr.trim() ||
-            stdout.trim() ||
+          processErrorMessage(stdout, stderr) ||
             `agent-browser exited with code ${exitCode}`,
         );
       }

@@ -13,9 +13,16 @@ import {
   removeSources,
   uploadNotebook,
 } from "./apps/gnb/service.ts";
+import {
+  login as loginX,
+  loginWithSystemBrowser,
+  readFeed,
+  readProfile,
+  resolveProfileUrl,
+} from "./apps/x/service.ts";
 
 const VERSION = "0.1.0";
-const APP_ALIASES = new Set(["gnb", "gemini-notebook", "notebooklm"]);
+const GNB_ALIASES = new Set(["gnb", "gemini-notebook", "notebooklm"]);
 
 interface ParsedOptions {
   values: Map<string, string | boolean>;
@@ -25,7 +32,12 @@ interface ParsedOptions {
 function parseOptions(args: string[]): ParsedOptions {
   const values = new Map<string, string | boolean>();
   const positionals: string[] = [];
-  const booleanOptions = new Set(["json", "headed", "help"]);
+  const booleanOptions = new Set([
+    "json",
+    "headed",
+    "help",
+    "system-browser",
+  ]);
 
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
@@ -75,8 +87,35 @@ function numberOption(
   return value;
 }
 
+function positiveIntegerOption(
+  options: ParsedOptions,
+  name: string,
+  fallback: number,
+): number {
+  const raw = stringOption(options, name);
+  if (!raw) {
+    return fallback;
+  }
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new CliError(`Option --${name} must be a positive integer.`, 2);
+  }
+  return value;
+}
+
 function hasFlag(options: ParsedOptions, name: string): boolean {
   return options.values.get(name) === true;
+}
+
+function assertAllowedOptions(
+  options: ParsedOptions,
+  allowed: Set<string>,
+): void {
+  for (const name of options.values.keys()) {
+    if (!allowed.has(name)) {
+      throw new CliError(`Unknown option: --${name}`, 2);
+    }
+  }
 }
 
 function printJson(value: unknown): void {
@@ -97,12 +136,17 @@ Usage:
   agent-browser-app gnb notebook upload <path> --id <id-or-url> [--account <email-or-id>] [--timeout <seconds>] [--headed] [--json]
   agent-browser-app gnb notebook source list --id <id-or-url> [--account <email-or-id>] [--headed] [--json]
   agent-browser-app gnb notebook source remove <source-id...> --id <id-or-url> [--account <email-or-id>] [--headed] [--json]
+  agent-browser-app x auth login [--account <handle>] [--timeout <seconds>] [--system-browser]
+  agent-browser-app x auth list [--json]
+  agent-browser-app x feed [--limit <count>] [--account <handle-or-id>] [--headed] [--json]
+  agent-browser-app x profile <url-or-id> [--account <handle-or-id>] [--headed] [--json]
 
 Application aliases:
-  gnb, gemini-notebook, notebooklm`;
+  Gemini Notebook: gnb, gemini-notebook, notebooklm
+  X: x, twitter`;
 }
 
-async function handleAuth(
+async function handleGnbAuth(
   registry: AccountRegistry,
   args: string[],
 ): Promise<void> {
@@ -154,6 +198,205 @@ async function handleAuth(
   }
 
   throw new CliError(`Unknown auth command: ${command || "(missing)"}`, 2);
+}
+
+async function handleXAuth(
+  registry: AccountRegistry,
+  args: string[],
+): Promise<void> {
+  const command = args[0];
+  const options = parseOptions(args.slice(1));
+
+  if (command === "login") {
+    assertAllowedOptions(
+      options,
+      new Set(["account", "system-browser", "timeout"]),
+    );
+    if (options.positionals.length > 0) {
+      throw new CliError("x auth login does not accept positional arguments.", 2);
+    }
+    const requestedAccount = stringOption(options, "account");
+    const account = await registry.accountForLogin(requestedAccount);
+    const timeoutSeconds = numberOption(options, "timeout", 600);
+    const systemBrowser = hasFlag(options, "system-browser");
+    const label =
+      requestedAccount ||
+      (account.identity ? `@${account.identity}` : account.id);
+    console.log(
+      `Opening ${
+        systemBrowser ? "system Google Chrome" : "headed Chrome"
+      } for X account "${label}".`,
+    );
+    const detectedUsername = systemBrowser
+      ? await loginWithSystemBrowser(account, timeoutSeconds, () => {
+          console.log(
+            "Complete X sign-in in the isolated Chrome window and wait for the X home feed. This command will capture the login and close the isolated browser automatically.",
+          );
+        })
+      : await loginX(account, timeoutSeconds, () => {
+          console.log(
+            "Complete X sign-in in the browser window. This command will continue automatically.",
+          );
+        });
+    const saved = await registry.saveAuthenticated(
+      account,
+      detectedUsername,
+    );
+    console.log(
+      `Authentication saved for ${
+        saved.identity ? `@${saved.identity}` : saved.id
+      }.`,
+    );
+    console.log(`Profile: ${saved.profileDir}`);
+    console.log(`State: ${saved.stateFile}`);
+    return;
+  }
+
+  if (command === "list") {
+    assertAllowedOptions(options, new Set(["json"]));
+    if (options.positionals.length > 0) {
+      throw new CliError("x auth list does not accept positional arguments.", 2);
+    }
+    const result = await registry.list();
+    if (hasFlag(options, "json")) {
+      printJson(result);
+      return;
+    }
+    if (result.accounts.length === 0) {
+      console.log("No X accounts configured.");
+      console.log("Run: agent-browser-app x auth login");
+      return;
+    }
+    for (const account of result.accounts) {
+      const active = account.id === result.activeAccountId ? "*" : " ";
+      console.log(
+        `${active} ${
+          account.identity ? `@${account.identity}` : "(handle not detected)"
+        } [${account.id}]`,
+      );
+    }
+    return;
+  }
+
+  throw new CliError(`Unknown X auth command: ${command || "(missing)"}`, 2);
+}
+
+function printTweet(tweet: Awaited<ReturnType<typeof readFeed>>[number]): void {
+  console.log(`${tweet.author.name} (@${tweet.author.username})`);
+  if (tweet.createdAt) {
+    console.log(tweet.createdAt);
+  }
+  console.log(tweet.text || "(no text)");
+  console.log(tweet.url);
+  const metrics = [
+    ["replies", tweet.metrics.replies],
+    ["reposts", tweet.metrics.reposts],
+    ["quotes", tweet.metrics.quotes],
+    ["likes", tweet.metrics.likes],
+    ["views", tweet.metrics.views],
+  ]
+    .filter((entry): entry is [string, number] => entry[1] !== null)
+    .map(([name, value]) => `${name}=${value}`)
+    .join(" ");
+  if (metrics) {
+    console.log(metrics);
+  }
+}
+
+async function handleXFeed(
+  registry: AccountRegistry,
+  args: string[],
+): Promise<void> {
+  const options = parseOptions(args);
+  assertAllowedOptions(
+    options,
+    new Set(["account", "headed", "json", "limit"]),
+  );
+  if (options.positionals.length > 0) {
+    throw new CliError("x feed does not accept positional arguments.", 2);
+  }
+  const limit = positiveIntegerOption(options, "limit", 20);
+  const account = await registry.resolve(stringOption(options, "account"));
+  const tweets = await readFeed(account, limit, hasFlag(options, "headed"));
+  if (hasFlag(options, "json")) {
+    printJson({
+      account: account.identity
+        ? `@${account.identity}`
+        : account.id,
+      tweets,
+    });
+    return;
+  }
+  if (tweets.length === 0) {
+    console.log("No posts found in the X home feed.");
+    return;
+  }
+  tweets.forEach((tweet, index) => {
+    if (index > 0) {
+      console.log("");
+    }
+    printTweet(tweet);
+  });
+}
+
+async function handleXProfile(
+  registry: AccountRegistry,
+  args: string[],
+): Promise<void> {
+  const options = parseOptions(args);
+  assertAllowedOptions(options, new Set(["account", "headed", "json"]));
+  const target = options.positionals[0];
+  if (!target) {
+    throw new CliError(
+      "x profile requires a profile URL, username, or numeric user ID.",
+      2,
+    );
+  }
+  if (options.positionals.length > 1) {
+    throw new CliError(
+      "x profile accepts exactly one profile URL, username, or numeric user ID.",
+      2,
+    );
+  }
+  resolveProfileUrl(target);
+  const account = await registry.resolve(stringOption(options, "account"));
+  const profile = await readProfile(
+    account,
+    target,
+    hasFlag(options, "headed"),
+  );
+  if (hasFlag(options, "json")) {
+    printJson(profile);
+    return;
+  }
+  console.log(`${profile.name} (@${profile.username})`);
+  if (profile.id) {
+    console.log(`ID: ${profile.id}`);
+  }
+  console.log(`URL: ${profile.url}`);
+  if (profile.bio) {
+    console.log(profile.bio);
+  }
+  if (profile.location) {
+    console.log(`Location: ${profile.location}`);
+  }
+  if (profile.website) {
+    console.log(`Website: ${profile.website}`);
+  }
+  if (profile.joinedAt) {
+    console.log(`Joined: ${profile.joinedAt}`);
+  }
+  if (profile.posts !== null) {
+    console.log(`Posts: ${profile.posts}`);
+  }
+  if (profile.following !== null) {
+    console.log(`Following: ${profile.following}`);
+  }
+  if (profile.followers !== null) {
+    console.log(`Followers: ${profile.followers}`);
+  }
+  console.log(`Verified: ${profile.verified ? "yes" : "no"}`);
+  console.log(`Protected: ${profile.protected ? "yes" : "no"}`);
 }
 
 async function handleNotebook(
@@ -355,17 +598,42 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
     console.log(VERSION);
     return;
   }
-  if (!APP_ALIASES.has(args[0])) {
+  if (!GNB_ALIASES.has(args[0]) && args[0] !== "x" && args[0] !== "twitter") {
     throw new CliError(
-      `Unknown application: ${args[0]}. Supported aliases: gnb, gemini-notebook, notebooklm`,
+      `Unknown application: ${args[0]}. Supported aliases: gnb, gemini-notebook, notebooklm, x, twitter`,
       2,
     );
+  }
+
+  if (args[0] === "x" || args[0] === "twitter") {
+    const registry = new AccountRegistry(
+      getAppPaths(process.env, "x"),
+      {
+        appName: "X",
+        loginCommand: "agent-browser-app x auth login",
+        identityKind: "handle",
+      },
+    );
+    const command = args[1];
+    if (command === "auth") {
+      await handleXAuth(registry, args.slice(2));
+      return;
+    }
+    if (command === "feed") {
+      await handleXFeed(registry, args.slice(2));
+      return;
+    }
+    if (command === "profile") {
+      await handleXProfile(registry, args.slice(2));
+      return;
+    }
+    throw new CliError(`Unknown X command: ${command || "(missing)"}`, 2);
   }
 
   const registry = new AccountRegistry(getAppPaths());
   const group = args[1];
   if (group === "auth") {
-    await handleAuth(registry, args.slice(2));
+    await handleGnbAuth(registry, args.slice(2));
     return;
   }
   if (group === "notebook") {

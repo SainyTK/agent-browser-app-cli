@@ -6,6 +6,7 @@ import type { AppPaths } from "./config.ts";
 export interface Account {
   id: string;
   email?: string;
+  identity?: string;
   profileDir: string;
   stateFile: string;
   createdAt: string;
@@ -19,8 +20,26 @@ interface RegistryFile {
   accounts: Account[];
 }
 
-function normalizeSelector(value: string): string {
-  return value.trim().toLowerCase();
+export interface AccountRegistryOptions {
+  appName: string;
+  loginCommand: string;
+  identityKind: "email" | "handle";
+}
+
+const DEFAULT_OPTIONS: AccountRegistryOptions = {
+  appName: "Gemini Notebook",
+  loginCommand: "agent-browser-app gnb auth login",
+  identityKind: "email",
+};
+
+function normalizeSelector(
+  value: string,
+  identityKind: AccountRegistryOptions["identityKind"],
+): string {
+  const normalized = value.trim().toLowerCase();
+  return identityKind === "handle"
+    ? normalized.replace(/^@/, "")
+    : normalized;
 }
 
 function safeAccountId(value: string): string {
@@ -35,7 +54,10 @@ function safeAccountId(value: string): string {
 }
 
 export class AccountRegistry {
-  constructor(private readonly paths: AppPaths) {}
+  constructor(
+    private readonly paths: AppPaths,
+    private readonly options: AccountRegistryOptions = DEFAULT_OPTIONS,
+  ) {}
 
   async initialize(): Promise<void> {
     await mkdir(this.paths.accountsRoot, { recursive: true, mode: 0o700 });
@@ -56,10 +78,21 @@ export class AccountRegistry {
     const requested = selector?.trim();
     const account = requested
       ? registry.accounts.find((candidate) => {
-          const normalized = normalizeSelector(requested);
+          const normalized = normalizeSelector(
+            requested,
+            this.options.identityKind,
+          );
           return (
-            normalizeSelector(candidate.id) === normalized ||
-            (candidate.email && normalizeSelector(candidate.email) === normalized)
+            normalizeSelector(candidate.id, this.options.identityKind) ===
+              normalized ||
+            (candidate.email &&
+              normalizeSelector(candidate.email, this.options.identityKind) ===
+                normalized) ||
+            (candidate.identity &&
+              normalizeSelector(
+                candidate.identity,
+                this.options.identityKind,
+              ) === normalized)
           );
         })
       : registry.accounts.find(
@@ -69,7 +102,7 @@ export class AccountRegistry {
     if (!account) {
       const suffix = requested ? ` "${requested}"` : "";
       throw new CliError(
-        `No Gemini Notebook account${suffix} is configured. Run: agent-browser-app gnb auth login`,
+        `No ${this.options.appName} account${suffix} is configured. Run: ${this.options.loginCommand}`,
       );
     }
 
@@ -81,11 +114,22 @@ export class AccountRegistry {
     const registry = await this.read();
 
     if (selector) {
-      const normalized = normalizeSelector(selector);
+      const normalized = normalizeSelector(
+        selector,
+        this.options.identityKind,
+      );
       const existing = registry.accounts.find(
         (candidate) =>
-          normalizeSelector(candidate.id) === normalized ||
-          (candidate.email && normalizeSelector(candidate.email) === normalized),
+          normalizeSelector(candidate.id, this.options.identityKind) ===
+            normalized ||
+          (candidate.email &&
+            normalizeSelector(candidate.email, this.options.identityKind) ===
+              normalized) ||
+          (candidate.identity &&
+            normalizeSelector(
+              candidate.identity,
+              this.options.identityKind,
+            ) === normalized),
       );
       if (existing) {
         return existing;
@@ -114,7 +158,14 @@ export class AccountRegistry {
     const accountRoot = join(this.paths.accountsRoot, id);
     const account: Account = {
       id,
-      email: selector?.includes("@") ? selector.trim() : undefined,
+      email:
+        this.options.identityKind === "email" && selector?.includes("@")
+          ? selector.trim()
+          : undefined,
+      identity:
+        this.options.identityKind === "handle" && selector
+          ? normalizeSelector(selector, "handle")
+          : undefined,
       profileDir: join(accountRoot, "browser-profile"),
       stateFile: join(accountRoot, "state.json"),
       createdAt: now,
@@ -125,12 +176,24 @@ export class AccountRegistry {
     return account;
   }
 
-  async saveAuthenticated(account: Account, detectedEmail?: string): Promise<Account> {
+  async saveAuthenticated(
+    account: Account,
+    detectedIdentity?: string,
+  ): Promise<Account> {
     const registry = await this.read();
     const now = new Date().toISOString();
     const updated: Account = {
       ...account,
-      email: detectedEmail || account.email,
+      email:
+        this.options.identityKind === "email"
+          ? detectedIdentity || account.email
+          : account.email,
+      identity:
+        this.options.identityKind === "handle"
+          ? detectedIdentity
+            ? normalizeSelector(detectedIdentity, "handle")
+            : account.identity
+          : account.identity,
       updatedAt: now,
       lastAuthenticatedAt: now,
     };

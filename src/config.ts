@@ -8,10 +8,13 @@ export interface AppPaths {
   registryFile: string;
 }
 
-export function getAppPaths(environment: NodeJS.ProcessEnv = process.env): AppPaths {
+export function getAppPaths(
+  environment: NodeJS.ProcessEnv = process.env,
+  appId = "gnb",
+): AppPaths {
   const agentBrowserHome =
     environment.AGENT_BROWSER_HOME?.trim() || join(homedir(), ".agent-browser");
-  const root = join(agentBrowserHome, "apps", "agent-browser-app", "gnb");
+  const root = join(agentBrowserHome, "apps", "agent-browser-app", appId);
 
   return {
     agentBrowserHome,
