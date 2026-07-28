@@ -14,8 +14,14 @@ import {
   removeSources,
   uploadNotebookFiles,
 } from "./apps/gnb/service.ts";
+import packageMetadata from "../package.json";
 
-const VERSION = "0.1.0";
+declare const AGENT_BROWSER_APP_BUILD_VERSION: string | undefined;
+
+const VERSION =
+  typeof AGENT_BROWSER_APP_BUILD_VERSION === "string"
+    ? AGENT_BROWSER_APP_BUILD_VERSION
+    : packageMetadata.version;
 const APP_ALIASES = new Set(["gnb", "gemini-notebook", "notebooklm"]);
 
 interface ParsedOptions {

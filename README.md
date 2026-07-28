@@ -36,6 +36,26 @@ Treat `state.json` as a secret because it contains authenticated session materia
 agent-browser 0.26 fixed state loading in its native runtime.
 The current development baseline is agent-browser 0.27.1.
 
+## Install
+
+Install the latest LTS release from `main`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/SainyTK/agent-browser-app-cli/main/install.sh | sh
+```
+
+Install the latest preview release from `preview`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/SainyTK/agent-browser-app-cli/main/install.sh | sh -s -- --channel preview
+```
+
+The installer selects the correct macOS or Linux binary for Intel or ARM, verifies its SHA-256 checksum, and installs `agent-browser-app` plus the `aba` alias to `~/.local/bin`.
+Set `AGENT_BROWSER_APP_INSTALL_DIR` or pass `--install-dir` to use another directory.
+Make sure that directory is on `PATH`.
+
+The CLI still requires `agent-browser` and its Chrome installation.
+
 ## Install for local development
 
 ```bash
@@ -170,6 +190,22 @@ It only stores account metadata in `accounts.json`.
 ```bash
 bun run verify
 ```
+
+Build a standalone release archive locally:
+
+```bash
+sh scripts/build-release.sh v0.1.0 bun-darwin-arm64 dist
+```
+
+## Release channels
+
+GitHub Actions publishes releases from two source branches:
+
+- `main` publishes the stable LTS tag matching the version in `package.json`.
+- `preview` publishes a prerelease tag using the package version and the workflow run number.
+
+Bump `package.json` before the next LTS release because stable tags are immutable.
+Every release contains standalone archives and SHA-256 checksum files for macOS and Linux on Intel and ARM.
 
 Tests run the complete CLI process against a deterministic fake agent-browser binary.
 Real authenticated verification still requires a user-controlled Google login:

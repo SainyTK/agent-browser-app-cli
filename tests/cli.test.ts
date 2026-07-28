@@ -58,7 +58,7 @@ describe("agent-browser-app CLI", () => {
     const shortVersion = await runCli(["--version"], home, [shortExecutable]);
     const packageJson = JSON.parse(
       await readFile(resolve(import.meta.dir, "../package.json"), "utf8"),
-    ) as { bin: Record<string, string> };
+    ) as { bin: Record<string, string>; version: string };
 
     expect(help.exitCode).toBe(0);
     expect(help.stdout).toContain("agent-browser-app gnb auth login");
@@ -75,12 +75,12 @@ describe("agent-browser-app CLI", () => {
     expect(help.stdout).toContain(
       "agent-browser-app gnb notebook source remove",
     );
-    expect(version.stdout.trim()).toBe("0.1.0");
+    expect(version.stdout.trim()).toBe(packageJson.version);
     expect(shortHelp.exitCode).toBe(0);
     expect(shortHelp.stdout).toContain("Executable aliases:");
     expect(shortHelp.stdout).toContain("agent-browser-app, aba");
     expect(shortVersion.exitCode).toBe(0);
-    expect(shortVersion.stdout.trim()).toBe("0.1.0");
+    expect(shortVersion.stdout.trim()).toBe(packageJson.version);
     expect(packageJson.bin).toEqual({
       "agent-browser-app": "./src/cli.ts",
       aba: "./src/cli.ts",
