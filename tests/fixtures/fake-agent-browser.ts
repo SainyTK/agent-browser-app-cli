@@ -174,7 +174,9 @@ if (command === "tab" && (!rest[0] || rest[0] === "list")) {
     await saveState(state);
     const discoversUserDrawer =
       script.includes("#expand-user-drawer-button") &&
-      script.includes("#user-drawer-content");
+      script.includes("#user-drawer-content") &&
+      script.includes("#notifications-inbox-button") &&
+      script.includes("#login-button");
     output({
       result: {
         authenticated: state.redditAuthPolls >= 2,

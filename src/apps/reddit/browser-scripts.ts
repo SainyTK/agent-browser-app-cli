@@ -75,7 +75,15 @@ export const readAuthStateScript = String.raw`
       const value = app?.getAttribute(name);
       return app?.hasAttribute(name) && value !== "false";
     });
-  if (appLoggedIn && !username) {
+  const headerLoggedIn = Boolean(
+    document.querySelector("#expand-user-drawer-button") &&
+    document.querySelector(
+      "#notifications-inbox-button, " +
+      "#header-action-item-chat-button, #create-post"
+    ) &&
+    !document.querySelector("#login-button")
+  );
+  if ((appLoggedIn || headerLoggedIn) && !username) {
     const userDrawerButton = document.querySelector(
       "#expand-user-drawer-button"
     );
@@ -103,7 +111,7 @@ export const readAuthStateScript = String.raw`
   const blocked = /prove your humanity|please wait for verification|blocked by network security|whoa there/i
     .test(pageText);
   return {
-    authenticated: Boolean(username || appLoggedIn),
+    authenticated: Boolean(username || appLoggedIn || headerLoggedIn),
     loginRequired,
     blocked,
     username,
