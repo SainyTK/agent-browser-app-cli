@@ -1,8 +1,8 @@
 ![Agent Browser App visual identity](assets/agent-browser-app-wallpaper.png)
 
-# agent-browser-app
+# Agent Browser App (aba cli)
 
-`agent-browser-app` provides small, stable commands for authenticated web applications.
+`Agent Browser App` provides small, stable commands for authenticated web applications.
 It is also installed as `aba`, a shorter alias that supports the same commands and options.
 It delegates browser work to [agent-browser](https://github.com/vercel-labs/agent-browser) and keeps the underlying browser available for inspection when authentication requires a real user.
 
