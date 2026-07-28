@@ -1,0 +1,4 @@
+interface:
+  display_name: "ABA X"
+  short_description: "Read X through the authenticated ABA CLI"
+  default_prompt: "Use $aba-x to read my authenticated X account."

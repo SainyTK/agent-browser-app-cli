@@ -1,0 +1,4 @@
+interface:
+  display_name: "ABA Reddit"
+  short_description: "Read Reddit through the authenticated ABA CLI"
+  default_prompt: "Use $aba-reddit to read my authenticated Reddit account."

@@ -1,0 +1,15 @@
+{
+  "$schema": "https://skills.sh/schemas/skills.sh.schema.json",
+  "notGrouped": "bottom",
+  "groupings": [
+    {
+      "title": "Agent Browser App",
+      "description": "Skills for authenticated web application workflows through the agent-browser-app CLI.",
+      "skills": [
+        "aba-gemini-notebook",
+        "aba-x",
+        "aba-reddit"
+      ]
+    }
+  ]
+}

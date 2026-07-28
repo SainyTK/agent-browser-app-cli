@@ -1,0 +1,4 @@
+interface:
+  display_name: "ABA Gemini Notebook"
+  short_description: "Use Gemini Notebook through the ABA CLI"
+  default_prompt: "Use $aba-gemini-notebook to work with my Gemini Notebook account."
