@@ -52,6 +52,17 @@ The feature branch must start from and merge the recorded development branch bef
 Never develop directly on the detached HEAD.
 
 Implement and test each feature entirely inside its dedicated worktree.
+Give each worktree its own `AGENT_BROWSER_HOME` so parallel CLI tests cannot share authentication profiles, browser state, or sessions.
+Invoke the CLI entry point from that branch's worktree instead of resolving an installed executable from `PATH`.
+For example:
+
+```bash
+export AGENT_BROWSER_HOME="/tmp/agent-browser-app-cli-$(basename "$PWD")"
+\bun ./src/cli.ts gnb auth list
+```
+
+Do not use a machine-level `agent-browser-app` or `aba` binary for branch verification because it may belong to a different branch.
+Keep the worktree-specific `AGENT_BROWSER_HOME` set for every real CLI command executed in that branch.
 For bug fixes, reproduce the user-facing failure with the real CLI before changing the code.
 Run focused checks during iteration, then run the full repository checks before handoff.
 When the result can be demonstrated clearly, provide the exact commands, relevant logs, exit codes, and other inspectable evidence.
