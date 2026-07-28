@@ -1,3 +1,5 @@
+![Agent Browser App visual identity](assets/agent-browser-app-wallpaper.png)
+
 # agent-browser-app
 
 `agent-browser-app` provides small, stable commands for authenticated web applications.
