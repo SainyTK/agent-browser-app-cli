@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -13,8 +13,9 @@ const temporaryDirectories: string[] = [];
 async function runCli(
   args: string[],
   home: string,
+  command = ["bun", cli],
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
-  const processHandle = Bun.spawn(["bun", cli, ...args], {
+  const processHandle = Bun.spawn([...command, ...args], {
     stdout: "pipe",
     stderr: "pipe",
     env: {
@@ -51,6 +52,13 @@ describe("agent-browser-app CLI", () => {
     const home = await createHome();
     const help = await runCli(["--help"], home);
     const version = await runCli(["--version"], home);
+    const shortExecutable = join(home, "aba");
+    await symlink(cli, shortExecutable);
+    const shortHelp = await runCli(["--help"], home, [shortExecutable]);
+    const shortVersion = await runCli(["--version"], home, [shortExecutable]);
+    const packageJson = JSON.parse(
+      await readFile(resolve(import.meta.dir, "../package.json"), "utf8"),
+    ) as { bin: Record<string, string> };
 
     expect(help.exitCode).toBe(0);
     expect(help.stdout).toContain("agent-browser-app gnb auth login");
@@ -67,6 +75,15 @@ describe("agent-browser-app CLI", () => {
       "agent-browser-app gnb notebook source remove",
     );
     expect(version.stdout.trim()).toBe("0.1.0");
+    expect(shortHelp.exitCode).toBe(0);
+    expect(shortHelp.stdout).toContain("Executable aliases:");
+    expect(shortHelp.stdout).toContain("agent-browser-app, aba");
+    expect(shortVersion.exitCode).toBe(0);
+    expect(shortVersion.stdout.trim()).toBe("0.1.0");
+    expect(packageJson.bin).toEqual({
+      "agent-browser-app": "./src/cli.ts",
+      aba: "./src/cli.ts",
+    });
   });
 
   test("runs the authenticated Gemini Notebook command flow", async () => {

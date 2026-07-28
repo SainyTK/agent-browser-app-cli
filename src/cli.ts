@@ -98,6 +98,9 @@ Usage:
   agent-browser-app gnb notebook source upload-files <path...> --id <id-or-url> [--account <email-or-id>] [--timeout <seconds>] [--headed] [--json]
   agent-browser-app gnb notebook source remove <source-id...> --id <id-or-url> [--account <email-or-id>] [--headed] [--json]
 
+Executable aliases:
+  agent-browser-app, aba
+
 Application aliases:
   gnb, gemini-notebook, notebooklm`;
 }
