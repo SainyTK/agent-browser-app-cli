@@ -154,6 +154,36 @@ aba gnb notebook ask "What are the main findings?" \
 
 Use `--timeout <seconds>` to override the answer wait.
 
+Add copied text as a source:
+
+```bash
+aba gnb notebook source add-text \
+  "Text content to use as a source." \
+  --id "notebook-id-or-url"
+```
+
+Add one or more website URLs in one command:
+
+```bash
+aba gnb notebook source add-urls \
+  "https://example.com/source-one" \
+  "https://example.com/source-two" \
+  --id "notebook-id-or-url"
+```
+
+URLs must use HTTP or HTTPS and must be unique within one command.
+
+Add a Google Drive item by its exact displayed name or Drive URL:
+
+```bash
+aba gnb notebook source add-drive \
+  "Quarterly research notes" \
+  --id "notebook-id-or-url"
+```
+
+The command searches through Gemini Notebook's embedded Google Drive picker.
+If more than one item has the requested name, pass the item's Drive URL to select it exactly.
+
 Upload one or more local files as sources:
 
 ```bash
@@ -166,7 +196,8 @@ aba gnb notebook source upload-files \
 All paths are validated before the browser opens.
 The command uses one file chooser and stays open until every newly added source is ready for queries.
 Files in the same call must have unique filenames.
-Use `--timeout <seconds>` to override the 30-minute processing timeout.
+Copied text, URL, Drive, and file commands stay open until every newly added source is ready for queries.
+Use `--timeout <seconds>` to override the 30-minute processing timeout for any source-add command.
 
 List sources and their current IDs:
 

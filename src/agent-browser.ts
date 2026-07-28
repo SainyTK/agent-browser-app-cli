@@ -1,7 +1,11 @@
 import { access, chmod, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { CliError } from "./errors.ts";
-import { uploadThroughFileChooser } from "./cdp.ts";
+import {
+  evaluateInFrame,
+  fillInFrame,
+  uploadThroughFileChooser,
+} from "./cdp.ts";
 import type { Account } from "./registry.ts";
 
 interface AgentBrowserEnvelope<T> {
@@ -102,6 +106,38 @@ export class AgentBrowser {
     const encoded = Buffer.from(script, "utf8").toString("base64");
     const data = await this.runJson<{ result: T }>(["eval", "-b", encoded]);
     return data.result;
+  }
+
+  async evalInFrame<T>(
+    frameUrlIncludes: string,
+    script: string,
+  ): Promise<T> {
+    const cdp = await this.runJson<{ cdpUrl: string }>(["get", "cdp-url"]);
+    const pageUrl = await this.currentUrl();
+    return evaluateInFrame<T>(
+      cdp.cdpUrl,
+      pageUrl,
+      frameUrlIncludes,
+      script,
+    );
+  }
+
+  async fillInFrame(
+    frameUrlIncludes: string,
+    selector: string,
+    value: string,
+    pressEnter = false,
+  ): Promise<boolean> {
+    const cdp = await this.runJson<{ cdpUrl: string }>(["get", "cdp-url"]);
+    const pageUrl = await this.currentUrl();
+    return fillInFrame(
+      cdp.cdpUrl,
+      pageUrl,
+      frameUrlIncludes,
+      selector,
+      value,
+      pressEnter,
+    );
   }
 
   async click(selector: string): Promise<void> {

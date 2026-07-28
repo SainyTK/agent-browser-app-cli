@@ -5,6 +5,9 @@ import { getAppPaths } from "./config.ts";
 import { CliError } from "./errors.ts";
 import { AccountRegistry } from "./registry.ts";
 import {
+  addDriveSource,
+  addTextSource,
+  addUrlSources,
   askNotebook,
   createNotebook,
   listSources,
@@ -150,6 +153,9 @@ Usage:
   agent-browser-app gnb notebook read <id-or-url> [--account <email-or-id>] [--headed] [--json]
   agent-browser-app gnb notebook ask <question> --id <id-or-url> [--account <email-or-id>] [--timeout <seconds>] [--headed] [--json]
   agent-browser-app gnb notebook source list --id <id-or-url> [--account <email-or-id>] [--headed] [--json]
+  agent-browser-app gnb notebook source add-text <text> --id <id-or-url> [--account <email-or-id>] [--timeout <seconds>] [--headed] [--json]
+  agent-browser-app gnb notebook source add-urls <url...> --id <id-or-url> [--account <email-or-id>] [--timeout <seconds>] [--headed] [--json]
+  agent-browser-app gnb notebook source add-drive <name-or-url> --id <id-or-url> [--account <email-or-id>] [--timeout <seconds>] [--headed] [--json]
   agent-browser-app gnb notebook source upload-files <path...> --id <id-or-url> [--account <email-or-id>] [--timeout <seconds>] [--headed] [--json]
   agent-browser-app gnb notebook source remove <source-id...> --id <id-or-url> [--account <email-or-id>] [--headed] [--json]
   agent-browser-app x auth login [--account <handle>] [--timeout <seconds>] [--system-browser]
@@ -786,6 +792,95 @@ async function handleNotebook(
             `${source.id}\t${source.status}\t${source.title}`,
           );
         }
+      }
+      return;
+    }
+    if (sourceCommand === "add-text") {
+      const text = options.positionals[1];
+      if (!text || options.positionals.length > 2) {
+        throw new CliError(
+          "notebook source add-text requires one quoted text argument.",
+          2,
+        );
+      }
+      const timeoutSeconds = numberOption(options, "timeout", 1800);
+      if (!json) {
+        console.log(
+          "Adding copied text and waiting for Gemini Notebook to finish processing...",
+        );
+      }
+      const result = await addTextSource(
+        account,
+        target,
+        text,
+        headed,
+        timeoutSeconds,
+      );
+      if (json) {
+        printJson(result);
+      } else {
+        console.log("Added copied text source.");
+        console.log(result.url);
+      }
+      return;
+    }
+    if (sourceCommand === "add-urls") {
+      const urls = options.positionals.slice(1);
+      if (urls.length === 0) {
+        throw new CliError(
+          "notebook source add-urls requires at least one URL.",
+          2,
+        );
+      }
+      const timeoutSeconds = numberOption(options, "timeout", 1800);
+      if (!json) {
+        console.log(
+          `Adding ${urls.length} URL source(s) and waiting for Gemini Notebook to finish processing...`,
+        );
+      }
+      const result = await addUrlSources(
+        account,
+        target,
+        urls,
+        headed,
+        timeoutSeconds,
+      );
+      if (json) {
+        printJson(result);
+      } else {
+        for (const url of result.inputUrls) {
+          console.log(`Added URL ${url}`);
+        }
+        console.log(result.url);
+      }
+      return;
+    }
+    if (sourceCommand === "add-drive") {
+      const driveTarget = options.positionals[1];
+      if (!driveTarget || options.positionals.length > 2) {
+        throw new CliError(
+          "notebook source add-drive requires one quoted Drive item name or URL.",
+          2,
+        );
+      }
+      const timeoutSeconds = numberOption(options, "timeout", 1800);
+      if (!json) {
+        console.log(
+          `Adding Drive item "${driveTarget}" and waiting for Gemini Notebook to finish processing...`,
+        );
+      }
+      const result = await addDriveSource(
+        account,
+        target,
+        driveTarget,
+        headed,
+        timeoutSeconds,
+      );
+      if (json) {
+        printJson(result);
+      } else {
+        console.log(`Added Drive source ${result.driveTarget}`);
+        console.log(result.url);
       }
       return;
     }
