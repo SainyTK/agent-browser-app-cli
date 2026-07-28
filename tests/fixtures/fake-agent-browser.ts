@@ -145,6 +145,12 @@ if (command === "tab" && (!rest[0] || rest[0] === "list")) {
     await saveState(state);
   }
   output({ url: state.url });
+} else if (command === "get" && rest[0] === "cdp-url") {
+  const cdpUrl = process.env.FAKE_CDP_URL;
+  if (!cdpUrl) {
+    throw new Error("FAKE_CDP_URL is required for fake CDP access");
+  }
+  output({ cdpUrl });
 } else if (command === "eval") {
   const encoded = rest[rest.indexOf("-b") + 1];
   const script = Buffer.from(encoded, "base64").toString("utf8");
@@ -308,7 +314,8 @@ if (command === "tab" && (!rest[0] || rest[0] === "list")) {
     });
   } else if (
     script.includes("aba:source-dialog-option-copied-text") ||
-    script.includes("aba:source-dialog-option-websites")
+    script.includes("aba:source-dialog-option-websites") ||
+    script.includes("aba:source-dialog-option-drive")
   ) {
     output({ result: true });
   } else if (

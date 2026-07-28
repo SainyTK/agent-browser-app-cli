@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, symlink } from "node:fs/promises";
+import {
+  mkdtemp,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -758,4 +764,132 @@ describe("agent-browser-app CLI", () => {
     expect(invalidUrl.exitCode).toBe(2);
     expect(invalidUrl.stderr).toContain("Invalid source URL");
   }, 35_000);
+
+  test("keeps a Drive URL result selected before inserting it", async () => {
+    const home = await createHome();
+    const driveUrl =
+      "https://drive.google.com/file/d/fixture-drive-id/view?usp=sharing";
+    let selectScriptCalls = 0;
+    let sourceInserted = false;
+    const server = Bun.serve({
+      port: 0,
+      fetch(request, serverInstance) {
+        if (serverInstance.upgrade(request)) {
+          return;
+        }
+        return new Response("Upgrade required", { status: 426 });
+      },
+      websocket: {
+        async message(socket, rawMessage) {
+          const message = JSON.parse(String(rawMessage)) as {
+            id: number;
+            method: string;
+            params: Record<string, unknown>;
+            sessionId?: string;
+          };
+          let result: unknown = {};
+          if (message.method === "Target.getTargets") {
+            result = {
+              targetInfos: [
+                {
+                  targetId: "target-1",
+                  type: "page",
+                  url: "https://notebooklm.google.com/notebook/abc-123?addSource=true",
+                },
+              ],
+            };
+          } else if (message.method === "Target.attachToTarget") {
+            result = { sessionId: "session-1" };
+          } else if (message.method === "Page.getFrameTree") {
+            result = {
+              frameTree: {
+                frame: {
+                  id: "main-frame",
+                  url: "https://notebooklm.google.com/notebook/abc-123",
+                },
+                childFrames: [
+                  {
+                    frame: {
+                      id: "picker-frame",
+                      url: "https://docs.google.com/picker/v2/home",
+                    },
+                  },
+                ],
+              },
+            };
+          } else if (message.method === "Page.createIsolatedWorld") {
+            result = { executionContextId: 42 };
+          } else if (message.method === "Runtime.evaluate") {
+            const expression = message.params.expression as string;
+            let value: unknown = true;
+            if (expression.includes("aba:drive-picker-state")) {
+              value = {
+                ready: true,
+                searchValue: driveUrl,
+                searching: false,
+                optionCount: 1,
+                exactMatchCount: 0,
+              };
+            } else if (
+              expression.includes("aba:drive-picker-selection")
+            ) {
+              value = { selectedCount: 1, canInsert: true };
+            } else if (expression.includes("aba:drive-picker-select")) {
+              selectScriptCalls += 1;
+            } else if (expression.includes("aba:drive-picker-insert")) {
+              if (!sourceInserted) {
+                const statePath = join(home, "fake-runtime.json");
+                const state = JSON.parse(
+                  await readFile(statePath, "utf8"),
+                ) as { sources: string[] };
+                state.sources.push("Fixture Drive Source");
+                await writeFile(statePath, JSON.stringify(state));
+                sourceInserted = true;
+              }
+            }
+            result = { result: { value } };
+          }
+          socket.send(
+            JSON.stringify({
+              id: message.id,
+              result,
+              sessionId: message.sessionId,
+            }),
+          );
+        },
+      },
+    });
+
+    try {
+      const loginResult = await runCli(
+        ["gnb", "auth", "login", "--timeout", "2"],
+        home,
+      );
+      expect(loginResult.exitCode).toBe(0);
+      const result = await runCli(
+        [
+          "gnb",
+          "notebook",
+          "source",
+          "add-drive",
+          driveUrl,
+          "--id",
+          "abc-123",
+          "--json",
+        ],
+        home,
+        { FAKE_CDP_URL: `ws://127.0.0.1:${server.port}` },
+      );
+      expect(result.exitCode).toBe(0);
+      expect(selectScriptCalls).toBe(0);
+      expect(sourceInserted).toBe(true);
+      expect(
+        JSON.parse(result.stdout).sources.map(
+          (source: { title: string }) => source.title,
+        ),
+      ).toEqual(["Fixture Drive Source"]);
+    } finally {
+      server.stop(true);
+    }
+  }, 25_000);
 });

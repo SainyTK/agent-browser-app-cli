@@ -973,6 +973,7 @@ async function waitForDrivePickerResults(
   target: string,
 ): Promise<DrivePickerState> {
   await delay(1000);
+  const targetIsUrl = /^https?:\/\//i.test(target);
   const deadline = Date.now() + 20_000;
   let latest: DrivePickerState = {
     ready: false,
@@ -991,6 +992,15 @@ async function waitForDrivePickerResults(
     if (latest.exactMatchCount === 1) {
       return latest;
     }
+    if (
+      targetIsUrl &&
+      latest.ready &&
+      latest.searchValue === target &&
+      !latest.searching &&
+      latest.optionCount === 1
+    ) {
+      return latest;
+    }
     const nextSignature = JSON.stringify(latest);
     if (
       latest.ready &&
@@ -999,7 +1009,7 @@ async function waitForDrivePickerResults(
       nextSignature === signature
     ) {
       stablePolls += 1;
-      if (stablePolls >= 8) {
+      if (stablePolls >= 3) {
         return latest;
       }
     } else {
@@ -1077,28 +1087,37 @@ export async function addDriveSource(
           `Multiple Google Drive items match "${normalizedTarget}". Use the item's Drive URL to select it exactly.`,
         );
       }
-      const selected = await browser.evalInFrame<boolean>(
+      let selection = await browser.evalInFrame<{
+        selectedCount: number;
+        canInsert: boolean;
+      }>(
         "docs.google.com/picker/",
-        selectDrivePickerItemScript(normalizedTarget),
+        readDrivePickerSelectionScript,
       );
-      if (!selected) {
-        throw new CliError(
-          `Could not select Google Drive item "${normalizedTarget}".`,
+      if (selection.selectedCount !== 1 || !selection.canInsert) {
+        const selected = await browser.evalInFrame<boolean>(
+          "docs.google.com/picker/",
+          selectDrivePickerItemScript(normalizedTarget),
+        );
+        if (!selected) {
+          throw new CliError(
+            `Could not select Google Drive item "${normalizedTarget}".`,
+          );
+        }
+        selection = await waitUntil(
+          () =>
+            browser.evalInFrame<{
+              selectedCount: number;
+              canInsert: boolean;
+            }>(
+              "docs.google.com/picker/",
+              readDrivePickerSelectionScript,
+            ),
+          (value) => value.selectedCount === 1 && value.canInsert,
+          10_000,
+          250,
         );
       }
-      const selection = await waitUntil(
-        () =>
-          browser.evalInFrame<{
-            selectedCount: number;
-            canInsert: boolean;
-          }>(
-            "docs.google.com/picker/",
-            readDrivePickerSelectionScript,
-          ),
-        (value) => value.selectedCount === 1 && value.canInsert,
-        10_000,
-        250,
-      );
       if (selection.selectedCount !== 1 || !selection.canInsert) {
         throw new CliError(
           `Google Drive did not finish selecting "${normalizedTarget}".`,
