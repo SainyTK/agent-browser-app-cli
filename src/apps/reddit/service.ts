@@ -27,12 +27,9 @@ const REDDIT_HOSTS = new Set([
 const REDDIT_SYSTEM_BROWSER_APP: SystemBrowserApp = {
   name: "Reddit",
   loginUrl: REDDIT_LOGIN_URL,
-  isAuthenticatedUrl: (url, title) =>
+  isAuthenticatedUrl: (url) =>
     REDDIT_HOSTS.has(url.hostname.toLowerCase()) &&
-    !/^\/login(?:\/|$)/.test(url.pathname) &&
-    !url.searchParams.has("js_challenge") &&
-    !url.searchParams.has("solution") &&
-    !/prove your humanity|please wait for verification/i.test(title || ""),
+    !/^\/login(?:\/|$)/.test(url.pathname),
   authenticatedDestination: "an authenticated Reddit page",
 };
 
@@ -165,7 +162,7 @@ export async function login(
         (value.authenticated && Boolean(value.username)) ||
         value.blocked,
       timeoutSeconds * 1000,
-      1000,
+      250,
     );
     if (state.blocked) {
       throw new CliError(
@@ -232,7 +229,7 @@ export async function loginWithSystemBrowser(
         (value.authenticated && Boolean(value.username)) ||
         value.blocked,
       Math.max(deadline - Date.now(), 1_000),
-      500,
+      200,
     );
     if (state.blocked) {
       throw blockedError();

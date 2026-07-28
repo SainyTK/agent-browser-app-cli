@@ -166,13 +166,18 @@ if (command === "tab" && (!rest[0] || rest[0] === "list")) {
   } else if (script.includes("aba:reddit-auth-state")) {
     state.redditAuthPolls += 1;
     await saveState(state);
+    const discoversUserDrawer =
+      script.includes("#expand-user-drawer-button") &&
+      script.includes("#user-drawer-content");
     output({
       result: {
         authenticated: state.redditAuthPolls >= 2,
         loginRequired: false,
         blocked: false,
         username:
-          state.redditAuthPolls >= 2 ? "fixture_redditor" : null,
+          state.redditAuthPolls >= 2 && discoversUserDrawer
+            ? "fixture_redditor"
+            : null,
         url: "https://www.reddit.com/",
       },
     });

@@ -28,6 +28,8 @@ export const readAuthStateScript = String.raw`
       'reddit-header-large a[href^="/user/"], ' +
       'reddit-header-action-items a[href^="/user/"], ' +
       'faceplate-tracker[noun="profile"] a[href^="/user/"], ' +
+      '#user-drawer-content a[href^="/user/"], ' +
+      'rpl-dropdown [slot="content"] a[href^="/user/"], ' +
       '[slot="user-drawer"] a[href^="/user/"], ' +
       'a[data-testid="profile-button"][href^="/user/"]'
     )
@@ -73,6 +75,17 @@ export const readAuthStateScript = String.raw`
       const value = app?.getAttribute(name);
       return app?.hasAttribute(name) && value !== "false";
     });
+  if (appLoggedIn && !username) {
+    const userDrawerButton = document.querySelector(
+      "#expand-user-drawer-button"
+    );
+    if (
+      userDrawerButton &&
+      userDrawerButton.getAttribute("aria-expanded") !== "true"
+    ) {
+      userDrawerButton.click();
+    }
+  }
   const path = location.pathname.replace(/\/+$/, "") || "/";
   const loginRequired = Boolean(
     /^\/login(?:\/|$)/.test(path) ||
