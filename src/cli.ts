@@ -10,6 +10,7 @@ import {
   listNotebooks,
   login,
   readNotebook,
+  removeNotebooks,
   removeSources,
   uploadNotebook,
 } from "./apps/gnb/service.ts";
@@ -92,6 +93,7 @@ Usage:
   agent-browser-app gnb auth switch <email-or-id>
   agent-browser-app gnb notebook list [--account <email-or-id>] [--headed] [--json]
   agent-browser-app gnb notebook create [--account <email-or-id>] [--headed] [--json]
+  agent-browser-app gnb notebook remove <id...> [--account <email-or-id>] [--headed] [--json]
   agent-browser-app gnb notebook read <id-or-url> [--account <email-or-id>] [--headed] [--json]
   agent-browser-app gnb notebook ask <question> --id <id-or-url> [--account <email-or-id>] [--timeout <seconds>] [--headed] [--json]
   agent-browser-app gnb notebook upload <path> --id <id-or-url> [--account <email-or-id>] [--timeout <seconds>] [--headed] [--json]
@@ -191,6 +193,25 @@ async function handleNotebook(
     } else {
       console.log(`Created notebook ${notebook.id}`);
       console.log(notebook.url);
+    }
+    return;
+  }
+
+  if (command === "remove" || command === "delete") {
+    const notebookIds = options.positionals;
+    if (notebookIds.length === 0) {
+      throw new CliError(
+        "notebook remove requires at least one notebook ID.",
+        2,
+      );
+    }
+    const result = await removeNotebooks(account, notebookIds, headed);
+    if (json) {
+      printJson(result);
+    } else {
+      for (const notebook of result.removed) {
+        console.log(`Removed ${notebook.id}\t${notebook.title}`);
+      }
     }
     return;
   }

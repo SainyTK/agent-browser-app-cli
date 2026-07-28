@@ -90,6 +90,15 @@ Create an empty notebook and print its URL:
 agent-browser-app gnb notebook create
 ```
 
+Remove one or more notebooks by ID:
+
+```bash
+agent-browser-app gnb notebook remove notebook-id-1 notebook-id-2
+```
+
+The command validates every requested ID before it removes any notebook.
+Notebook removal is permanent.
+
 Read visible notebook metadata:
 
 ```bash
