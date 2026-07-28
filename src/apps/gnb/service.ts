@@ -10,12 +10,16 @@ import type { Account } from "../../registry.ts";
 import {
   detectAccountEmailScript,
   listNotebooksScript,
+  markConfirmNotebookRemovalScript,
   markCreateButtonScript,
   markConfirmSourceRemovalScript,
+  markNotebookMenuButtonScript,
   markOnboardingButtonScript,
   markQueryInputScript,
+  markRemoveNotebookMenuItemScript,
   markRemoveSourceMenuItemScript,
   markSourceMenuButtonScript,
+  notebookRemovalSettledScript,
   markUploadButtonScript,
   readChatStateScript,
   readNotebookScript,
@@ -241,6 +245,151 @@ export async function createNotebook(
   });
 }
 
+function notebookId(target: string): string | undefined {
+  return directNotebookUrl(target)?.match(NOTEBOOK_URL_PATTERN)?.[1];
+}
+
+export async function removeNotebooks(
+  account: Account,
+  notebookIds: string[],
+  headed: boolean,
+): Promise<{
+  removed: NotebookSummary[];
+}> {
+  const requestedIds = Array.from(
+    new Set(
+      notebookIds.map((target) => {
+        const id = notebookId(target);
+        if (!id) {
+          throw new CliError(`Invalid Gemini Notebook ID or URL: ${target}.`);
+        }
+        return id;
+      }),
+    ),
+  );
+  if (requestedIds.length === 0) {
+    throw new CliError(
+      "notebook remove requires at least one notebook ID.",
+      2,
+    );
+  }
+
+  return runAuthenticated(account, async (browser) => {
+    await browser.open(NOTEBOOK_HOME_URL, headed);
+    assertAuthenticated(await browser.currentUrl());
+    const initial = await waitUntil<ListResult>(
+      () => browser.eval<ListResult>(listNotebooksScript),
+      (value) =>
+        value.loginRequired || value.ready || value.notebooks.length > 0,
+      20_000,
+    );
+    if (initial.loginRequired) {
+      throw new CliError(
+        "Google authentication has expired. Run: agent-browser-app gnb auth login",
+      );
+    }
+    const targets = requestedIds.map((id) => {
+      const notebook = initial.notebooks.find((candidate) => candidate.id === id);
+      if (!notebook) {
+        throw new CliError(
+          `Unknown notebook ID "${id}". Run notebook list again and use an ID from the current output.`,
+        );
+      }
+      return notebook;
+    });
+
+    for (const target of targets) {
+      await browser.open(NOTEBOOK_HOME_URL, headed);
+      assertAuthenticated(await browser.currentUrl());
+      const current = await waitUntil<ListResult>(
+        () => browser.eval<ListResult>(listNotebooksScript),
+        (value) =>
+          value.loginRequired ||
+          value.notebooks.some((notebook) => notebook.id === target.id),
+        20_000,
+      );
+      if (current.loginRequired) {
+        throw new CliError(
+          "Google authentication has expired. Run: agent-browser-app gnb auth login",
+        );
+      }
+      if (!current.notebooks.some((notebook) => notebook.id === target.id)) {
+        throw new CliError(
+          `Gemini Notebook did not reload notebook "${target.id}" before removal.`,
+        );
+      }
+      const menuMarked = await browser.eval<boolean>(
+        markNotebookMenuButtonScript(target.id),
+      );
+      if (!menuMarked) {
+        throw new CliError(
+          `Could not open the menu for notebook "${target.id}".`,
+        );
+      }
+      await browser.click(
+        '[data-agent-browser-app-target="notebook-menu"]',
+      );
+      const removeMarked = await waitUntil(
+        () => browser.eval<boolean>(markRemoveNotebookMenuItemScript),
+        Boolean,
+        10_000,
+        250,
+      );
+      if (!removeMarked) {
+        throw new CliError(
+          `Could not find the remove action for notebook "${target.id}".`,
+        );
+      }
+      await browser.click(
+        '[data-agent-browser-app-target="remove-notebook"]',
+      );
+      const confirmMarked = await waitUntil(
+        () => browser.eval<boolean>(markConfirmNotebookRemovalScript),
+        Boolean,
+        10_000,
+        250,
+      );
+      if (!confirmMarked) {
+        throw new CliError(
+          `Gemini Notebook did not show a removal confirmation for notebook "${target.id}".`,
+        );
+      }
+      await browser.click(
+        '[data-agent-browser-app-target="confirm-notebook-removal"]',
+      );
+      const settled = await waitUntil(
+        () => browser.eval<boolean>(notebookRemovalSettledScript),
+        Boolean,
+        10_000,
+        250,
+      );
+      if (!settled) {
+        throw new CliError(
+          `Gemini Notebook did not finish closing the removal dialog for notebook "${target.id}".`,
+        );
+      }
+      const remaining = await waitUntil<ListResult>(
+        () => browser.eval<ListResult>(listNotebooksScript),
+        (value) =>
+          value.ready &&
+          !value.notebooks.some((notebook) => notebook.id === target.id),
+        20_000,
+        500,
+      );
+      if (
+        !remaining.ready ||
+        remaining.notebooks.some((notebook) => notebook.id === target.id)
+      ) {
+        throw new CliError(
+          `Gemini Notebook did not remove notebook "${target.id}".`,
+        );
+      }
+    }
+
+    return { removed: targets };
+  });
+}
+
 async function resolveNotebookUrl(
   account: Account,
   target: string,
@@ -376,32 +525,54 @@ export async function askNotebook(
   });
 }
 
-export async function uploadNotebook(
+export async function uploadNotebookFiles(
   account: Account,
   target: string,
-  inputPath: string,
+  inputPaths: string[],
   headed: boolean,
   timeoutSeconds: number,
-): Promise<{ file: string; status: "processing" | "ready"; url: string }> {
+): Promise<{
+  files: Array<{ file: string; status: "ready" }>;
+  url: string;
+}> {
   const url = directNotebookUrl(target);
   if (!url) {
     throw new CliError(`Invalid Gemini Notebook ID or URL: ${target}.`);
   }
-  let filePath: string;
-  try {
-    filePath = await realpath(inputPath);
-    const fileStat = await stat(filePath);
-    if (!fileStat.isFile()) {
-      throw new Error("path is not a file");
-    }
-  } catch (error) {
+  if (inputPaths.length === 0) {
     throw new CliError(
-      `Could not read upload file "${inputPath}": ${
-        error instanceof Error ? error.message : String(error)
-      }`,
+      "notebook source upload-files requires at least one file path.",
+      2,
     );
   }
-  const fileName = basename(filePath);
+  const files = await Promise.all(
+    inputPaths.map(async (inputPath) => {
+      try {
+        const filePath = await realpath(inputPath);
+        const fileStat = await stat(filePath);
+        if (!fileStat.isFile()) {
+          throw new Error("path is not a file");
+        }
+        return { file: filePath, title: basename(filePath) };
+      } catch (error) {
+        throw new CliError(
+          `Could not read upload file "${inputPath}": ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    }),
+  );
+  const duplicateTitles = files
+    .map((file) => file.title.toLowerCase())
+    .filter((title, index, titles) => titles.indexOf(title) !== index);
+  if (duplicateTitles.length > 0) {
+    throw new CliError(
+      `Upload paths must have unique filenames. Duplicate: ${duplicateTitles[0]}`,
+      2,
+    );
+  }
+
   return runAuthenticated(account, async (browser) => {
     const uploadUrl = `${url}?addSource=true`;
     await browser.open(uploadUrl, headed);
@@ -416,59 +587,73 @@ export async function uploadNotebook(
         "Could not find the Gemini Notebook upload-files control. Retry with --headed to inspect the current interface.",
       );
     }
-    const baseline = await waitUntil<{
-      loaded: boolean;
-      matchingCount: number;
-    }>(
-      () => browser.eval(readUploadStatusScript(fileName)),
-      (value) => value.loaded,
-      30_000,
-      500,
-    );
-    if (!baseline.loaded) {
-      throw new CliError(
-        "Gemini Notebook did not finish loading its existing source list.",
+    const initial = await loadSources(browser);
+    const baselineCounts = new Map<string, number>();
+    for (const source of initial.sources) {
+      const normalizedTitle = source.title.toLowerCase();
+      baselineCounts.set(
+        normalizedTitle,
+        (baselineCounts.get(normalizedTitle) || 0) + 1,
       );
     }
-    await browser.uploadThroughFileChooser(
+    await browser.uploadFilesThroughFileChooser(
       '[data-agent-browser-app-target="upload"]',
-      filePath,
+      files.map((file) => file.file),
     );
 
-    const status = await waitUntil<{
+    interface UploadStatus {
       newItemPresent: boolean;
       ready: boolean;
       dialogOpen: boolean;
       processing: boolean;
       error: string | null;
       matchingCount: number;
-    }>(
-      () =>
-        browser.eval(
-          readUploadStatusScript(fileName, baseline.matchingCount),
-        ),
-      (value) => Boolean(value.error) || value.ready,
-      timeoutSeconds * 1000,
-      1000,
+    }
+    const deadline = Date.now() + timeoutSeconds * 1000;
+    let statuses: UploadStatus[] = [];
+    while (Date.now() < deadline) {
+      statuses = [];
+      for (const file of files) {
+        statuses.push(
+          await browser.eval<UploadStatus>(
+            readUploadStatusScript(
+              file.title,
+              baselineCounts.get(file.title.toLowerCase()) || 0,
+            ),
+          ),
+        );
+      }
+      const failedIndex = statuses.findIndex((status) => status.error);
+      if (failedIndex >= 0) {
+        throw new CliError(
+          `Gemini Notebook upload failed for "${files[failedIndex].title}": ${statuses[failedIndex].error}`,
+        );
+      }
+      if (statuses.every((status) => status.ready)) {
+        return {
+          files: files.map((file) => ({
+            file: file.file,
+            status: "ready" as const,
+          })),
+          url,
+        };
+      }
+      await delay(1000);
+    }
+    const missing = files.filter(
+      (_file, index) => !statuses[index]?.newItemPresent,
     );
-    if (status.error) {
-      throw new CliError(`Gemini Notebook upload failed: ${status.error}`);
-    }
-    if (!status.newItemPresent) {
+    if (missing.length > 0) {
       throw new CliError(
-        `Gemini Notebook did not accept "${fileName}" within ${timeoutSeconds} seconds.`,
+        `Gemini Notebook did not accept ${missing.map((file) => `"${file.title}"`).join(", ")} within ${timeoutSeconds} seconds.`,
       );
     }
-    if (!status.ready) {
-      throw new CliError(
-        `Gemini Notebook did not finish processing "${fileName}" within ${timeoutSeconds} seconds.`,
-      );
-    }
-    return {
-      file: filePath,
-      status: "ready",
-      url,
-    };
+    const processing = files.filter(
+      (_file, index) => !statuses[index]?.ready,
+    );
+    throw new CliError(
+      `Gemini Notebook did not finish processing ${processing.map((file) => `"${file.title}"`).join(", ")} within ${timeoutSeconds} seconds.`,
+    );
   });
 }
 

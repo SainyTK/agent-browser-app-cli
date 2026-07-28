@@ -177,9 +177,12 @@ interface TargetInfo {
 export async function uploadThroughFileChooser(
   cdpUrl: string,
   pageUrl: string,
-  filePath: string,
+  filePaths: string[],
   trigger: () => Promise<void>,
 ): Promise<void> {
+  if (filePaths.length === 0) {
+    throw new CliError("At least one file is required for upload.");
+  }
   const client = await CdpClient.connect(cdpUrl);
   let sessionId: string | undefined;
   try {
@@ -212,16 +215,24 @@ export async function uploadThroughFileChooser(
       { enabled: true },
       sessionId,
     );
-    const chooser = client.waitForEvent<{ backendNodeId: number }>(
+    const chooser = client.waitForEvent<{
+      backendNodeId: number;
+      mode?: "selectSingle" | "selectMultiple";
+    }>(
       "Page.fileChooserOpened",
       sessionId,
       20_000,
     );
     await trigger();
-    const { backendNodeId } = await chooser;
+    const { backendNodeId, mode } = await chooser;
+    if (filePaths.length > 1 && mode === "selectSingle") {
+      throw new CliError(
+        "Gemini Notebook opened a single-file chooser for a multi-file upload.",
+      );
+    }
     await client.send(
       "DOM.setFileInputFiles",
-      { files: [filePath], backendNodeId },
+      { files: filePaths, backendNodeId },
       sessionId,
       30_000,
     );

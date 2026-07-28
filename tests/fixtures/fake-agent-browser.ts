@@ -21,15 +21,49 @@ interface FakeState {
   url: string;
   responsePolls: number;
   submitted: boolean;
+  notebooks: Array<{
+    id: string;
+    title: string;
+    description: string;
+    url: string;
+  }>;
+  pendingNotebookId?: string;
   sources: string[];
   pendingSourceIndex?: number;
 }
 
 async function readState(): Promise<FakeState> {
+  const notebooks = [
+    {
+      id: "abc-123",
+      title: "Test Notebook",
+      description: "Fixture notebook",
+      url: "https://notebooklm.google.com/notebook/abc-123",
+    },
+    {
+      id: "untitled-1",
+      title: "Untitled notebook",
+      description: "Fixture removable notebook",
+      url: "https://notebooklm.google.com/notebook/untitled-1",
+    },
+    {
+      id: "untitled-2",
+      title: "Untitled notebook",
+      description: "Fixture removable notebook",
+      url: "https://notebooklm.google.com/notebook/untitled-2",
+    },
+    {
+      id: "untitled-3",
+      title: "Untitled notebook",
+      description: "Fixture removable notebook",
+      url: "https://notebooklm.google.com/notebook/untitled-3",
+    },
+  ];
   const defaults: FakeState = {
     url: "https://notebooklm.google.com/",
     responsePolls: 0,
     submitted: false,
+    notebooks,
     sources: ["Fixture Source A", "Fixture Source B"],
   };
   try {
@@ -39,6 +73,9 @@ async function readState(): Promise<FakeState> {
     return {
       ...defaults,
       ...parsed,
+      notebooks: Array.isArray(parsed.notebooks)
+        ? parsed.notebooks
+        : defaults.notebooks,
       sources: Array.isArray(parsed.sources)
         ? parsed.sources
         : defaults.sources,
@@ -206,14 +243,7 @@ if (command === "tab" && (!rest[0] || rest[0] === "list")) {
       result: {
         loginRequired: false,
         ready: true,
-        notebooks: [
-          {
-            id: "abc-123",
-            title: "Test Notebook",
-            description: "Fixture notebook",
-            url: "https://notebooklm.google.com/notebook/abc-123",
-          },
-        ],
+        notebooks: state.notebooks,
       },
     });
   } else if (script.includes("aba:onboarding")) {
@@ -266,6 +296,24 @@ if (command === "tab" && (!rest[0] || rest[0] === "list")) {
         })),
       },
     });
+  } else if (script.includes("aba:notebook-menu")) {
+    const notebookId = JSON.parse(
+      script.match(/const notebookId = (".*");/)?.[1] || '""',
+    ) as string;
+    const found = state.notebooks.some(
+      (notebook) => notebook.id === notebookId,
+    );
+    if (found) {
+      state.pendingNotebookId = notebookId;
+      await saveState(state);
+    }
+    output({ result: found });
+  } else if (script.includes("aba:notebook-remove-menu-item")) {
+    output({ result: true });
+  } else if (script.includes("aba:notebook-remove-confirm")) {
+    output({ result: true });
+  } else if (script.includes("aba:notebook-removal-settled")) {
+    output({ result: true });
   } else if (script.includes("aba:source-menu")) {
     const sourceIndex = Number(
       script.match(/const sourceIndex = (\d+);/)?.[1],
@@ -290,6 +338,15 @@ if (command === "tab" && (!rest[0] || rest[0] === "list")) {
   const selector = rest[0] || "";
   if (selector.includes("create-notebook")) {
     state.url = "https://notebooklm.google.com/notebook/new-456";
+    await saveState(state);
+  } else if (
+    selector.includes("confirm-notebook-removal") &&
+    state.pendingNotebookId
+  ) {
+    state.notebooks = state.notebooks.filter(
+      (notebook) => notebook.id !== state.pendingNotebookId,
+    );
+    state.pendingNotebookId = undefined;
     await saveState(state);
   } else if (
     selector.includes("confirm-source-removal") &&

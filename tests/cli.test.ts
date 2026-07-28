@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -18,8 +18,9 @@ async function runCli(
   args: string[],
   home: string,
   environment: NodeJS.ProcessEnv = {},
+  command = ["bun", cli],
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
-  const processHandle = Bun.spawn(["bun", cli, ...args], {
+  const processHandle = Bun.spawn([...command, ...args], {
     stdout: "pipe",
     stderr: "pipe",
     env: {
@@ -57,12 +58,35 @@ describe("agent-browser-app CLI", () => {
     const home = await createHome();
     const help = await runCli(["--help"], home);
     const version = await runCli(["--version"], home);
+    const shortExecutable = join(home, "aba");
+    await symlink(cli, shortExecutable);
+    const shortHelp = await runCli(
+      ["--help"],
+      home,
+      {},
+      [shortExecutable],
+    );
+    const shortVersion = await runCli(
+      ["--version"],
+      home,
+      {},
+      [shortExecutable],
+    );
+    const packageJson = JSON.parse(
+      await readFile(resolve(import.meta.dir, "../package.json"), "utf8"),
+    ) as { bin: Record<string, string>; version: string };
 
     expect(help.exitCode).toBe(0);
     expect(help.stdout).toContain("agent-browser-app gnb auth login");
-    expect(help.stdout).toContain("agent-browser-app gnb notebook upload");
+    expect(help.stdout).toContain("agent-browser-app gnb notebook remove");
     expect(help.stdout).toContain(
       "agent-browser-app gnb notebook source list",
+    );
+    expect(help.stdout).toContain(
+      "agent-browser-app gnb notebook source upload-files",
+    );
+    expect(help.stdout).not.toContain(
+      "agent-browser-app gnb notebook upload",
     );
     expect(help.stdout).toContain(
       "agent-browser-app gnb notebook source remove",
@@ -70,7 +94,16 @@ describe("agent-browser-app CLI", () => {
     expect(help.stdout).toContain("agent-browser-app x auth login");
     expect(help.stdout).toContain("agent-browser-app x feed");
     expect(help.stdout).toContain("agent-browser-app x profile");
-    expect(version.stdout.trim()).toBe("0.1.0");
+    expect(version.stdout.trim()).toBe(packageJson.version);
+    expect(shortHelp.exitCode).toBe(0);
+    expect(shortHelp.stdout).toContain("Executable aliases:");
+    expect(shortHelp.stdout).toContain("agent-browser-app, aba");
+    expect(shortVersion.exitCode).toBe(0);
+    expect(shortVersion.stdout.trim()).toBe(packageJson.version);
+    expect(packageJson.bin).toEqual({
+      "agent-browser-app": "./src/cli.ts",
+      aba: "./src/cli.ts",
+    });
   });
 
   test("runs the authenticated X command flow", async () => {
@@ -396,8 +429,10 @@ describe("agent-browser-app CLI", () => {
       [
         "gnb",
         "notebook",
-        "upload",
-        "/does/not/exist.m4a",
+        "source",
+        "upload-files",
+        "/does/not/exist-a.m4a",
+        "/does/not/exist-b.pdf",
         "--id",
         "abc-123",
       ],
@@ -405,6 +440,22 @@ describe("agent-browser-app CLI", () => {
     );
     expect(missingUpload.exitCode).toBe(1);
     expect(missingUpload.stderr).toContain("Could not read upload file");
+
+    const removedUploadCommand = await runCli(
+      [
+        "gnb",
+        "notebook",
+        "upload",
+        "/does/not/exist.m4a",
+        "--id",
+        "abc-123",
+      ],
+      home,
+    );
+    expect(removedUploadCommand.exitCode).toBe(2);
+    expect(removedUploadCommand.stderr).toContain(
+      "Unknown notebook command: upload",
+    );
 
     const completedInvocations = (await readFile(
       join(home, "fake-invocations.jsonl"),
@@ -427,6 +478,88 @@ describe("agent-browser-app CLI", () => {
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("auth login");
   });
+
+  test("validates and removes multiple notebooks by ID", async () => {
+    const home = await createHome();
+    const loginResult = await runCli(
+      ["gnb", "auth", "login", "--timeout", "2"],
+      home,
+    );
+    expect(loginResult.exitCode).toBe(0);
+
+    const missingIds = await runCli(
+      [
+        "gnb",
+        "notebook",
+        "remove",
+        "untitled-1",
+        "missing-notebook",
+        "--json",
+      ],
+      home,
+    );
+    expect(missingIds.exitCode).toBe(1);
+    expect(missingIds.stderr).toContain(
+      'Unknown notebook ID "missing-notebook"',
+    );
+
+    const unchanged = await runCli(
+      ["gnb", "notebook", "list", "--json"],
+      home,
+    );
+    expect(
+      JSON.parse(unchanged.stdout).notebooks.map(
+        (notebook: { id: string }) => notebook.id,
+      ),
+    ).toContain("untitled-1");
+
+    const removed = await runCli(
+      [
+        "gnb",
+        "notebook",
+        "remove",
+        "untitled-1",
+        "untitled-2",
+        "untitled-1",
+        "--json",
+      ],
+      home,
+    );
+    expect(removed.exitCode).toBe(0);
+    expect(
+      JSON.parse(removed.stdout).removed.map(
+        (notebook: { id: string }) => notebook.id,
+      ),
+    ).toEqual(["untitled-1", "untitled-2"]);
+
+    const humanRemoved = await runCli(
+      ["gnb", "notebook", "delete", "untitled-3"],
+      home,
+    );
+    expect(humanRemoved.exitCode).toBe(0);
+    expect(humanRemoved.stdout).toContain(
+      "Removed untitled-3\tUntitled notebook",
+    );
+
+    const after = await runCli(
+      ["gnb", "notebook", "list", "--json"],
+      home,
+    );
+    expect(
+      JSON.parse(after.stdout).notebooks.map(
+        (notebook: { id: string }) => notebook.id,
+      ),
+    ).toEqual(["abc-123"]);
+
+    const missingArgument = await runCli(
+      ["gnb", "notebook", "remove"],
+      home,
+    );
+    expect(missingArgument.exitCode).toBe(2);
+    expect(missingArgument.stderr).toContain(
+      "notebook remove requires at least one notebook ID",
+    );
+  }, 40_000);
 
   test("lists and removes multiple notebook sources", async () => {
     const home = await createHome();
@@ -454,6 +587,39 @@ describe("agent-browser-app CLI", () => {
         (source: { id: string }) => source.id,
       ),
     ).toEqual(["source-1", "source-2"]);
+
+    const invalidRemoval = await runCli(
+      [
+        "gnb",
+        "notebook",
+        "source",
+        "remove",
+        "source-1",
+        "source-99",
+        "--id",
+        "abc-123",
+      ],
+      home,
+    );
+    expect(invalidRemoval.exitCode).toBe(1);
+    expect(invalidRemoval.stderr).toContain(
+      'Unknown source ID "source-99"',
+    );
+
+    const unchanged = await runCli(
+      [
+        "gnb",
+        "notebook",
+        "source",
+        "list",
+        "--id",
+        "abc-123",
+        "--json",
+      ],
+      home,
+    );
+    expect(unchanged.exitCode).toBe(0);
+    expect(JSON.parse(unchanged.stdout).sources).toHaveLength(2);
 
     const removed = await runCli(
       [
@@ -490,5 +656,5 @@ describe("agent-browser-app CLI", () => {
     );
     expect(after.exitCode).toBe(0);
     expect(JSON.parse(after.stdout).sources).toEqual([]);
-  }, 35_000);
+  }, 45_000);
 });
