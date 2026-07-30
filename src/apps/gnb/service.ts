@@ -108,6 +108,12 @@ function normalizeChatText(value: string | null): string {
   return (value || "").replace(/\s+/g, " ").trim();
 }
 
+function isReasoningDisclosure(value: string): boolean {
+  return /^Thoughts(?:\s+(?:expand_more|expand_less))?$/i.test(
+    normalizeChatText(value),
+  );
+}
+
 async function readStableChatState(
   browser: AgentBrowser,
   timeoutMs = 10_000,
@@ -515,7 +521,11 @@ export async function askNotebook(
         ) ??
         (newPairs.length === 1 ? newPairs[0] : undefined);
       const answer = responsePair?.answer?.trim() || "";
-      if (responsePair?.complete && answer) {
+      if (
+        responsePair?.complete &&
+        answer &&
+        !isReasoningDisclosure(answer)
+      ) {
         if (answer === candidate) {
           stablePolls += 1;
           if (stablePolls >= 2) {

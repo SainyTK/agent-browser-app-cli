@@ -407,7 +407,10 @@ if (command === "tab" && (!rest[0] || rest[0] === "list")) {
     if (state.submitted && state.responsePolls >= 2) {
       pairs.push({
         question: "question",
-        answer: "Fixture answer",
+        answer:
+          state.responsePolls < 4
+            ? "Thoughts\nexpand_more"
+            : "Fixture answer",
         complete: true,
       });
     }

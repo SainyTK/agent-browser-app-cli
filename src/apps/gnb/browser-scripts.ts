@@ -749,9 +749,36 @@ export const readChatStateScript = String.raw`
     const assistantCard = pair.querySelector(
       ".to-user-message-card-content"
     );
-    const answer = assistantCard?.querySelector(
-      ".message-text-content"
-    )?.innerText?.trim() || null;
+    const readAnswer = (element) => {
+      const root =
+        element.querySelector("element-list-renderer") || element;
+      const textWithoutControls = (node) => {
+        const clone = node.cloneNode(true);
+        clone.querySelectorAll(
+          "thinking-chain-view, .citation-marker"
+        ).forEach((control) => control.remove());
+        return (clone.textContent || "")
+          .replace(/\s+/g, " ").trim();
+      };
+      const rootChildren = Array.from(root.children);
+      const blocks = (rootChildren.length > 0 ? rootChildren : [root])
+        .filter((block) => !block.matches("thinking-chain-view"))
+        .map((block) => {
+          if (block.matches("ul, ol")) {
+            return Array.from(block.children)
+              .map(textWithoutControls)
+              .filter(Boolean)
+              .join("\n");
+          }
+          return textWithoutControls(block);
+        })
+        .filter(Boolean);
+      return blocks.join("\n").trim();
+    };
+    const answers = Array.from(
+      assistantCard?.querySelectorAll(".message-text-content") || []
+    ).map(readAnswer).filter(Boolean);
+    const answer = answers.at(-1) || null;
     const complete = Boolean(
       answer &&
       assistantCard?.querySelector(
@@ -770,12 +797,17 @@ export const readSourcesScript = String.raw`
   const items = Array.from(
     document.querySelectorAll(".single-source-container, source-item")
   );
+  const emptyState = document.querySelector(
+    ".source-empty-state, .scroll-container-no-sources"
+  );
   const sourceCountText =
     document.querySelector(".cover-subtitle-source-count")?.textContent || "";
   const sourceCountMatch = sourceCountText.match(/\b(\d+)\s+sources?\b/i);
   const expectedSourceCount = sourceCountMatch
     ? Number(sourceCountMatch[1])
-    : null;
+    : emptyState
+      ? 0
+      : null;
   const sources = items.map((item, index) => {
     const title = (
       item.querySelector(".source-title")?.textContent ||
