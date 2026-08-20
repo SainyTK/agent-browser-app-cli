@@ -791,6 +791,37 @@ export const readChatStateScript = String.raw`
 })()
 `;
 
+export function setSelectedSourcesScript(sourceIndexes: number[]): string {
+  return String.raw`
+/* aba:source-selection */
+(() => {
+  const desiredIndexes = new Set(${JSON.stringify(sourceIndexes)});
+  const items = Array.from(
+    document.querySelectorAll(".single-source-container, source-item")
+  );
+  const selectedIndexes = [];
+  let ready = items.length > 0;
+
+  for (const [index, item] of items.entries()) {
+    const checkbox = item.querySelector(
+      "mat-checkbox.select-checkbox input[type=checkbox], input[type=checkbox]"
+    );
+    if (!checkbox) {
+      ready = false;
+      continue;
+    }
+    const shouldSelect = desiredIndexes.has(index);
+    if (checkbox.checked !== shouldSelect) {
+      checkbox.click();
+    }
+    if (checkbox.checked) selectedIndexes.push(index);
+  }
+
+  return { ready, selectedIndexes };
+})()
+`;
+}
+
 export const readSourcesScript = String.raw`
 /* aba:source-list */
 (() => {

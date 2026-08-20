@@ -147,13 +147,18 @@ Read visible notebook metadata:
 aba gnb notebook read <notebook-id-or-url>
 ```
 
-Ask a notebook a question:
+Ask a notebook question using only selected sources:
 
 ```bash
-aba gnb notebook ask "What are the main findings?" \
-  --id "notebook-id-or-url"
+aba gnb ask "What are the main findings?" \
+  --id "notebook-id-or-url" \
+  --source source-1 \
+  --source source-2 \
+  --source "research-notes.pdf"
 ```
 
+Repeat `--source` with a source ID from `source list` or an exact source filename.
+If you do not specify `--source`, Gemini Notebook uses whichever sources are currently checked in that notebook.
 Use `--timeout <seconds>` to override the answer wait.
 
 Add copied text as a source:

@@ -779,6 +779,50 @@ describe("agent-browser-app CLI", () => {
     expect(stateSaves).toHaveLength(1);
   }, 20_000);
 
+  test("asks Gemini Notebook with only selected sources", async () => {
+    const home = await createHome();
+    const loginResult = await runCli(
+      ["gnb", "auth", "login", "--timeout", "2"],
+      home,
+    );
+    expect(loginResult.exitCode).toBe(0);
+
+    const askResult = await runCli(
+      [
+        "gnb",
+        "ask",
+        "question",
+        "--id",
+        "abc-123",
+        "--source",
+        "source-2",
+        "--source",
+        "Fixture Source B",
+        "--timeout",
+        "8",
+        "--json",
+      ],
+      home,
+    );
+    expect(askResult.exitCode).toBe(0);
+    expect(JSON.parse(askResult.stdout)).toMatchObject({
+      question: "question",
+      answer: "Fixture answer",
+      sources: [
+        {
+          id: "source-2",
+          title: "Fixture Source B",
+          status: "ready",
+        },
+      ],
+    });
+
+    const runtime = JSON.parse(
+      await readFile(join(home, "fake-runtime.json"), "utf8"),
+    ) as { selectedSourceIndexes: number[] };
+    expect(runtime.selectedSourceIndexes).toEqual([1]);
+  }, 20_000);
+
   test("reports a useful error before login", async () => {
     const home = await createHome();
     const result = await runCli(["gnb", "notebook", "list"], home);

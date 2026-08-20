@@ -43,12 +43,29 @@ const GNB_ALIASES = new Set(["gnb", "gemini-notebook", "notebooklm"]);
 const REDDIT_ALIASES = new Set(["reddit"]);
 
 interface ParsedOptions {
-  values: Map<string, string | boolean>;
+  values: Map<string, string | string[] | boolean>;
   positionals: string[];
 }
 
+function addOptionValue(
+  values: Map<string, string | string[] | boolean>,
+  name: string,
+  value: string,
+): void {
+  const current = values.get(name);
+  if (typeof current === "string") {
+    values.set(name, [current, value]);
+    return;
+  }
+  if (Array.isArray(current)) {
+    current.push(value);
+    return;
+  }
+  values.set(name, value);
+}
+
 function parseOptions(args: string[]): ParsedOptions {
-  const values = new Map<string, string | boolean>();
+  const values = new Map<string, string | string[] | boolean>();
   const positionals: string[] = [];
   const booleanOptions = new Set([
     "agent-browser",
@@ -69,7 +86,7 @@ function parseOptions(args: string[]): ParsedOptions {
     const name =
       equalIndex >= 0 ? argument.slice(2, equalIndex) : argument.slice(2);
     if (equalIndex >= 0) {
-      values.set(name, argument.slice(equalIndex + 1));
+      addOptionValue(values, name, argument.slice(equalIndex + 1));
       continue;
     }
     if (booleanOptions.has(name)) {
@@ -80,7 +97,7 @@ function parseOptions(args: string[]): ParsedOptions {
     if (!value || value.startsWith("--")) {
       throw new CliError(`Option --${name} requires a value.`, 2);
     }
-    values.set(name, value);
+    addOptionValue(values, name, value);
     index += 1;
   }
   return { values, positionals };
@@ -88,7 +105,18 @@ function parseOptions(args: string[]): ParsedOptions {
 
 function stringOption(options: ParsedOptions, name: string): string | undefined {
   const value = options.values.get(name);
-  return typeof value === "string" ? value : undefined;
+  if (typeof value === "string") {
+    return value;
+  }
+  return Array.isArray(value) ? value.at(-1) : undefined;
+}
+
+function stringOptions(options: ParsedOptions, name: string): string[] {
+  const value = options.values.get(name);
+  if (typeof value === "string") {
+    return [value];
+  }
+  return Array.isArray(value) ? value : [];
 }
 
 function numberOption(
@@ -153,7 +181,8 @@ Usage:
   agent-browser-app gnb notebook create [--account <email-or-id>] [--headed] [--json]
   agent-browser-app gnb notebook remove <id...> [--account <email-or-id>] [--headed] [--json]
   agent-browser-app gnb notebook read <id-or-url> [--account <email-or-id>] [--headed] [--json]
-  agent-browser-app gnb notebook ask <question> --id <id-or-url> [--account <email-or-id>] [--timeout <seconds>] [--headed] [--json]
+  agent-browser-app gnb ask <question> --id <id-or-url> [--source <source-id-or-file-name>]... [--account <email-or-id>] [--timeout <seconds>] [--headed] [--json]
+  agent-browser-app gnb notebook ask <question> --id <id-or-url> [--source <source-id-or-file-name>]... [--account <email-or-id>] [--timeout <seconds>] [--headed] [--json]
   agent-browser-app gnb notebook source list --id <id-or-url> [--account <email-or-id>] [--headed] [--json]
   agent-browser-app gnb notebook source add-text <text> --id <id-or-url> [--account <email-or-id>] [--timeout <seconds>] [--headed] [--json]
   agent-browser-app gnb notebook source add-urls <url...> --id <id-or-url> [--account <email-or-id>] [--timeout <seconds>] [--headed] [--json]
@@ -768,6 +797,10 @@ async function handleNotebook(
   }
 
   if (command === "ask" || command === "query") {
+    assertAllowedOptions(
+      options,
+      new Set(["account", "headed", "id", "json", "source", "timeout", "url"]),
+    );
     const question = options.positionals[0];
     const target =
       stringOption(options, "id") || stringOption(options, "url");
@@ -787,6 +820,7 @@ async function handleNotebook(
       target,
       headed,
       timeoutSeconds,
+      stringOptions(options, "source"),
     );
     if (json) {
       printJson(result);
@@ -1059,6 +1093,10 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
   }
   if (group === "notebook") {
     await handleNotebook(registry, args.slice(2));
+    return;
+  }
+  if (group === "ask" || group === "query") {
+    await handleNotebook(registry, [group, ...args.slice(2)]);
     return;
   }
   throw new CliError(`Unknown command group: ${group || "(missing)"}`, 2);

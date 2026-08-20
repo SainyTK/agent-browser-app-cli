@@ -33,6 +33,7 @@ import {
   readSourcesScript,
   readUploadStatusScript,
   selectDrivePickerItemScript,
+  setSelectedSourcesScript,
 } from "./browser-scripts.ts";
 
 export interface NotebookSummary {
@@ -53,6 +54,11 @@ interface SourceListState {
   loaded: boolean;
   expectedSourceCount: number | null;
   sources: SourceSummary[];
+}
+
+interface SourceSelectionState {
+  ready: boolean;
+  selectedIndexes: number[];
 }
 
 interface ListResult {
@@ -476,13 +482,98 @@ export async function readNotebook(
   });
 }
 
+function resolveSelectedSources(
+  sources: SourceSummary[],
+  selectors: string[],
+): SourceSummary[] {
+  const selected: SourceSummary[] = [];
+  const selectedIds = new Set<string>();
+
+  for (const selector of selectors) {
+    const normalized = selector.trim();
+    if (!normalized) {
+      throw new CliError("Source selectors must not be empty.", 2);
+    }
+    const byId = sources.find((source) => source.id === normalized);
+    const byTitle = sources.filter(
+      (source) => source.title.trim().toLowerCase() === normalized.toLowerCase(),
+    );
+    const source = byId || (byTitle.length === 1 ? byTitle[0] : undefined);
+    if (!source) {
+      if (byTitle.length > 1) {
+        throw new CliError(
+          `Gemini Notebook source name "${selector}" is ambiguous. Use one of these IDs: ${byTitle.map((candidate) => candidate.id).join(", ")}.`,
+          2,
+        );
+      }
+      throw new CliError(
+        `Unknown Gemini Notebook source "${selector}". Run: agent-browser-app gnb notebook source list --id <notebook-id-or-url>`,
+        2,
+      );
+    }
+    if (source.status !== "ready") {
+      throw new CliError(
+        `Gemini Notebook source "${source.title}" is ${source.status} and cannot be selected for a question.`,
+        2,
+      );
+    }
+    if (!selectedIds.has(source.id)) {
+      selected.push(source);
+      selectedIds.add(source.id);
+    }
+  }
+
+  return selected;
+}
+
+async function selectSourcesForQuestion(
+  browser: AgentBrowser,
+  sources: SourceSummary[],
+  selectedSources: SourceSummary[],
+): Promise<void> {
+  const sourceIndexes = selectedSources.map((source) => {
+    const index = sources.indexOf(source);
+    if (index < 0) {
+      throw new CliError(
+        `Gemini Notebook source "${source.id}" was not present while selecting question sources.`,
+      );
+    }
+    return index;
+  });
+  const expected = new Set(sourceIndexes);
+  const selection = await waitUntil<SourceSelectionState>(
+    () => browser.eval<SourceSelectionState>(setSelectedSourcesScript(sourceIndexes)),
+    (value) =>
+      value.ready &&
+      value.selectedIndexes.length === expected.size &&
+      value.selectedIndexes.every((index) => expected.has(index)),
+    15_000,
+    250,
+  );
+  if (
+    !selection.ready ||
+    selection.selectedIndexes.length !== expected.size ||
+    !selection.selectedIndexes.every((index) => expected.has(index))
+  ) {
+    throw new CliError(
+      "Gemini Notebook did not apply the requested source selection. Retry with --headed to inspect the current interface.",
+    );
+  }
+}
+
 export async function askNotebook(
   account: Account,
   question: string,
   target: string,
   headed: boolean,
   timeoutSeconds: number,
-): Promise<{ question: string; answer: string; url: string }> {
+  sourceSelectors: string[] = [],
+): Promise<{
+  question: string;
+  answer: string;
+  url: string;
+  sources?: SourceSummary[];
+}> {
   const url = directNotebookUrl(target);
   if (!url) {
     throw new CliError(
@@ -492,6 +583,15 @@ export async function askNotebook(
   return runAuthenticated(account, async (browser) => {
     await browser.open(url, headed);
     assertAuthenticated(await browser.currentUrl());
+    const sourceState = sourceSelectors.length > 0
+      ? await loadSources(browser)
+      : undefined;
+    const selectedSources = sourceState
+      ? resolveSelectedSources(sourceState.sources, sourceSelectors)
+      : undefined;
+    if (selectedSources && sourceState) {
+      await selectSourcesForQuestion(browser, sourceState.sources, selectedSources);
+    }
     const marked = await waitUntil(
       () => browser.eval<boolean>(markQueryInputScript),
       Boolean,
@@ -529,7 +629,12 @@ export async function askNotebook(
         if (answer === candidate) {
           stablePolls += 1;
           if (stablePolls >= 2) {
-            return { question, answer, url };
+            return {
+              question,
+              answer,
+              url,
+              ...(selectedSources ? { sources: selectedSources } : {}),
+            };
           }
         } else {
           candidate = answer;

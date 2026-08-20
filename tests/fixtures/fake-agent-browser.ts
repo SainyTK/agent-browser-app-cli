@@ -30,6 +30,7 @@ interface FakeState {
   }>;
   pendingNotebookId?: string;
   sources: string[];
+  selectedSourceIndexes: number[];
   pendingSourceIndex?: number;
   sourceMode?: "copied-text" | "websites";
   sourceInput?: string;
@@ -70,6 +71,7 @@ async function readState(): Promise<FakeState> {
     submitted: false,
     notebooks,
     sources: ["Fixture Source A", "Fixture Source B"],
+    selectedSourceIndexes: [0, 1],
   };
   try {
     const parsed = JSON.parse(
@@ -84,6 +86,9 @@ async function readState(): Promise<FakeState> {
       sources: Array.isArray(parsed.sources)
         ? parsed.sources
         : defaults.sources,
+      selectedSourceIndexes: Array.isArray(parsed.selectedSourceIndexes)
+        ? parsed.selectedSourceIndexes
+        : defaults.selectedSourceIndexes,
     };
   } catch {
     return defaults;
@@ -417,6 +422,18 @@ if (command === "tab" && (!rest[0] || rest[0] === "list")) {
     output({
       result: {
         pairs,
+      },
+    });
+  } else if (script.includes("aba:source-selection")) {
+    const sourceIndexes = JSON.parse(
+      script.match(/const desiredIndexes = new Set\((\[[^\n]+\])\);/)?.[1] || "[]",
+    ) as number[];
+    state.selectedSourceIndexes = sourceIndexes;
+    await saveState(state);
+    output({
+      result: {
+        ready: true,
+        selectedIndexes: state.selectedSourceIndexes,
       },
     });
   } else if (script.includes("aba:source-list")) {
