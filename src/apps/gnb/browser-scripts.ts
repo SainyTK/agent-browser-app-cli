@@ -23,7 +23,7 @@ export const detectAccountEmailScript = String.raw`
 
 export const listNotebooksScript = String.raw`
 /* aba:notebook-list */
-(async () => {
+(() => {
   const normalizeUrl = (value) => {
     if (!value) return null;
     try {
@@ -74,44 +74,6 @@ export const listNotebooksScript = String.raw`
     );
   }
 
-  const tableRows = Array.from(
-    document.querySelectorAll('tr[role="row"]')
-  ).filter((row) => row.querySelector('[role="cell"]'));
-  if (tableRows.length > 0) {
-    const originalPushState = history.pushState;
-    const originalReplaceState = history.replaceState;
-    let capturedPath = null;
-    history.pushState = function(_state, _title, url) {
-      capturedPath = String(url);
-      throw new Error("agent-browser-app navigation capture");
-    };
-    history.replaceState = function() {
-      throw new Error("agent-browser-app navigation rollback");
-    };
-    try {
-      for (const row of tableRows) {
-        capturedPath = null;
-        const listener = row.__zone_symbol__clickfalse?.[0]?.callback;
-        if (typeof listener === "function") {
-          listener(new MouseEvent("click", {
-            bubbles: false,
-            cancelable: true
-          }));
-          await new Promise((resolve) => setTimeout(resolve, 10));
-        }
-        const cells = Array.from(row.querySelectorAll('[role="cell"]'));
-        const titleElement = row.querySelector(".project-table-title");
-        add(
-          normalizeUrl(capturedPath),
-          titleElement?.getAttribute("title") || titleElement?.textContent || cells[0]?.textContent,
-          cells.slice(1, 5).map((cell) => cell.textContent?.trim()).filter(Boolean).join(" | ")
-        );
-      }
-    } finally {
-      history.pushState = originalPushState;
-      history.replaceState = originalReplaceState;
-    }
-  }
 
   return {
     loginRequired: location.hostname === "accounts.google.com",

@@ -8,6 +8,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { listNotebooksScript } from "../src/apps/gnb/browser-scripts.ts";
 
 const cli = resolve(import.meta.dir, "../src/cli.ts");
 const fakeBrowser = resolve(
@@ -60,6 +61,13 @@ afterEach(async () => {
 });
 
 describe("agent-browser-app CLI", () => {
+  test("lists Gemini Notebook entries without invoking application event handlers", () => {
+    expect(listNotebooksScript).not.toContain("__zone_symbol__clickfalse");
+    expect(listNotebooksScript).not.toContain("history.pushState");
+    expect(listNotebooksScript).not.toContain("history.replaceState");
+    expect(listNotebooksScript).not.toContain("new MouseEvent");
+  });
+
   test("prints help and version", async () => {
     const home = await createHome();
     const help = await runCli(["--help"], home);
