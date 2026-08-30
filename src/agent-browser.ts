@@ -70,6 +70,10 @@ export class AgentBrowser {
 
   async open(url: string, headed = false): Promise<void> {
     this.headed = headed;
+    if (this.cdpPort !== undefined) {
+      await this.runJson(["open", url], { timeoutMs: 60_000 });
+      return;
+    }
     await mkdir(this.account.profileDir, { recursive: true, mode: 0o700 });
     if (await this.stateExists()) {
       await this.runJson(["open"], { headed, timeoutMs: 60_000 });

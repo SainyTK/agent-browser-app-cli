@@ -30,9 +30,13 @@ const server = Bun.serve({
   port,
   fetch(request) {
     if (new URL(request.url).pathname === "/json/list") {
-      const reddit = process.argv
+      const startUrl = process.argv
         .slice(2)
-        .some((argument) => argument.startsWith("https://www.reddit.com/"));
+        .find((argument) => argument.startsWith("https://"));
+      const reddit = startUrl?.startsWith("https://www.reddit.com/");
+      const geminiNotebook = startUrl?.startsWith(
+        "https://notebooklm.google.com/",
+      );
       targetPolls += 1;
       return Response.json([
         {
@@ -41,14 +45,18 @@ const server = Bun.serve({
               ? "Reddit - Please wait for verification"
               : reddit
                 ? "Reddit"
-                : "Home / X",
+                : geminiNotebook
+                  ? "Gemini Notebook"
+                  : "Home / X",
           type: "page",
           url:
             reddit && targetPolls <= 2
               ? "https://www.reddit.com/?js_challenge=1"
               : reddit
                 ? "https://www.reddit.com/"
-                : "https://x.com/home",
+                : geminiNotebook
+                  ? "https://notebooklm.google.com/"
+                  : "https://x.com/home",
         },
       ]);
     }

@@ -107,6 +107,17 @@ To add or refresh a specific account:
 aba gnb auth login --account you@example.com
 ```
 
+Google can reject sign-in in a software-controlled browser.
+Use system Chrome when that happens:
+
+```bash
+aba gnb auth login --account you@example.com --system-browser
+```
+
+The CLI opens an isolated Chrome profile, waits for the Gemini Notebook home page, attaches agent-browser to save the authenticated state, then closes the isolated browser.
+Notebook commands for that account reopen the same isolated system Chrome profile so Google keeps the browser session it approved.
+It does not ask for cookies, passwords, or browser-session data.
+
 List accounts and select the default account:
 
 ```bash
@@ -230,7 +241,9 @@ Use `--json` for machine-readable output.
 ## Gemini Notebook authentication behavior
 
 Login runs in headed mode because Google may require manual account selection, passkeys, or two-factor authentication.
-Normal notebook operations run headless by default.
+Pass `--system-browser` to authenticate in isolated system Chrome when Google rejects the agent-browser window.
+Notebook commands for that account use the same isolated system Chrome profile.
+Normal notebook operations for accounts authenticated without `--system-browser` run headless by default.
 Authenticated operations launch the persistent profile without navigating, load `state.json` into the running session, and then open Gemini Notebook.
 Only `auth login` writes `state.json`.
 Normal notebook operations treat the known-good login state as read-only so a short-lived runtime session cannot overwrite it.

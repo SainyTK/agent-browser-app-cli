@@ -648,6 +648,98 @@ describe("agent-browser-app CLI", () => {
     ).toBe(true);
   });
 
+  test("bootstraps Gemini Notebook login in an isolated system browser", async () => {
+    const home = await createHome();
+    const systemBrowserLog = join(home, "fake-system-browser.jsonl");
+    const systemBrowserDone = join(home, "fake-system-browser.done");
+
+    const result = await runCli(
+      [
+        "gnb",
+        "auth",
+        "login",
+        "--account",
+        "tanakorn.karode@gmail.com",
+        "--system-browser",
+        "--timeout",
+        "2",
+      ],
+      home,
+      {
+        AGENT_BROWSER_APP_SYSTEM_BROWSER_BIN: fakeSystemBrowser,
+        FAKE_SYSTEM_BROWSER_LOG: systemBrowserLog,
+        FAKE_SYSTEM_BROWSER_DONE: systemBrowserDone,
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("Opening system Google Chrome");
+    expect(result.stdout).toContain(
+      "Authentication saved for test@example.com.",
+    );
+    const browserArguments = JSON.parse(
+      (await readFile(systemBrowserLog, "utf8")).trim(),
+    ) as string[];
+    expect(
+      browserArguments.find((argument) =>
+        argument.startsWith("--user-data-dir="),
+      ),
+    ).toContain(
+      "/apps/agent-browser-app/gnb/accounts/tanakorn-karode-gmail-com/browser-profile",
+    );
+    expect(browserArguments).toContain("https://notebooklm.google.com/");
+
+    const invocations = (await readFile(
+      join(home, "fake-invocations.jsonl"),
+      "utf8",
+    ))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as string[]);
+    const cdpInvocation = invocations.find((invocation) =>
+      invocation.includes("--cdp"),
+    );
+    expect(cdpInvocation).toBeDefined();
+    expect(cdpInvocation).not.toContain("--profile");
+    expect(cdpInvocation).not.toContain("--headed");
+    expect(
+      invocations.some((invocation) => {
+        const tabIndex = invocation.indexOf("tab");
+        return tabIndex >= 0 && invocation[tabIndex + 1] === "t1";
+      }),
+    ).toBe(true);
+
+    await rm(systemBrowserDone);
+    const notebookList = await runCli(
+      ["gnb", "notebook", "list", "--json"],
+      home,
+      {
+        AGENT_BROWSER_APP_SYSTEM_BROWSER_BIN: fakeSystemBrowser,
+        FAKE_SYSTEM_BROWSER_LOG: systemBrowserLog,
+        FAKE_SYSTEM_BROWSER_DONE: systemBrowserDone,
+      },
+    );
+    expect(notebookList.exitCode).toBe(0);
+    expect(JSON.parse(notebookList.stdout).notebooks).toHaveLength(4);
+    const allInvocations = (await readFile(
+      join(home, "fake-invocations.jsonl"),
+      "utf8",
+    ))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as string[]);
+    expect(
+      allInvocations.some((invocation) => {
+        const stateIndex = invocation.indexOf("state");
+        return (
+          invocation.includes("--cdp") &&
+          stateIndex >= 0 &&
+          invocation[stateIndex + 1] === "load"
+        );
+      }),
+    ).toBe(false);
+  });
+
   test("runs the authenticated Gemini Notebook command flow", async () => {
     const home = await createHome();
 

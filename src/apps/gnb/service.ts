@@ -7,6 +7,7 @@ import {
 } from "../../config.ts";
 import { CliError } from "../../errors.ts";
 import type { Account } from "../../registry.ts";
+import { startSystemBrowser } from "../system-browser.ts";
 import {
   detectAccountEmailScript,
   insertDrivePickerSelectionScript,
@@ -97,18 +98,20 @@ async function waitUntil<T>(
 
 function isNotebookHome(url: string): boolean {
   try {
-    const parsed = new URL(url);
-    return (
-      (
-        parsed.hostname === "notebooklm.google.com" ||
-        parsed.hostname === "notebook.google.com"
-      ) &&
-      !parsed.pathname.startsWith("/login")
-    );
+    return isNotebookHomeUrl(new URL(url));
   } catch {
     return false;
   }
 }
+
+function isNotebookHomeUrl(url: URL): boolean {
+  return (
+    (url.hostname === "notebooklm.google.com" ||
+      url.hostname === "notebook.google.com") &&
+    !url.pathname.startsWith("/login")
+  );
+}
+
 
 function normalizeChatText(value: string | null): string {
   return (value || "").replace(/\s+/g, " ").trim();
@@ -155,11 +158,73 @@ async function requireState(account: Account): Promise<void> {
   }
 }
 
+async function startAuthenticatedSystemBrowser(
+  account: Account,
+  timeoutSeconds: number,
+  onStarted: () => void = () => undefined,
+): Promise<{
+  browser: AgentBrowser;
+  close: () => Promise<void>;
+}> {
+  const systemBrowser = await startSystemBrowser(
+    account,
+    NOTEBOOK_HOME_URL,
+    process.env,
+    onStarted,
+  );
+  const browser = new AgentBrowser(account);
+  try {
+    await browser.attach(systemBrowser.cdpPort);
+    const deadline = Date.now() + timeoutSeconds * 1000;
+    while (Date.now() < deadline) {
+      const notebookTab = (await browser.listTabs()).find((tab) => {
+        if (tab.type !== "page") {
+          return false;
+        }
+        try {
+          return isNotebookHomeUrl(new URL(tab.url));
+        } catch {
+          return false;
+        }
+      });
+      if (notebookTab) {
+        await browser.switchTab(notebookTab.tabId);
+        const state = await browser.eval<ListResult>(listNotebooksScript);
+        if (state.ready || state.notebooks.length > 0) {
+          return {
+            browser,
+            close: async () => {
+              await browser.close();
+              await systemBrowser.close();
+            },
+          };
+        }
+      }
+      await delay(1000);
+    }
+    throw new CliError(
+      `Gemini Notebook did not finish loading after Google sign-in within ${timeoutSeconds} seconds.`,
+    );
+  } catch (error) {
+    await browser.close();
+    await systemBrowser.close();
+    throw error;
+  }
+}
+
 async function runAuthenticated<T>(
   account: Account,
   operation: (browser: AgentBrowser) => Promise<T>,
 ): Promise<T> {
   await requireState(account);
+  if (account.useSystemBrowser) {
+    const session = await startAuthenticatedSystemBrowser(account, 30);
+    try {
+      return await operation(session.browser);
+    } finally {
+      await session.close();
+    }
+  }
   const browser = new AgentBrowser(account);
   try {
     return await operation(browser);
@@ -203,6 +268,28 @@ export async function login(
     return email;
   } finally {
     await browser.close();
+  }
+}
+
+export async function loginWithSystemBrowser(
+  account: Account,
+  timeoutSeconds: number,
+  onWaiting: () => void,
+): Promise<string | undefined> {
+  await new AgentBrowser(account).close();
+  const session = await startAuthenticatedSystemBrowser(
+    account,
+    timeoutSeconds,
+    onWaiting,
+  );
+  try {
+    const email =
+      (await session.browser.eval<string | null>(detectAccountEmailScript)) ||
+      undefined;
+    await session.browser.saveState();
+    return email;
+  } finally {
+    await session.close();
   }
 }
 

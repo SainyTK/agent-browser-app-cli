@@ -20,6 +20,7 @@ export interface Account {
   createdAt: string;
   updatedAt: string;
   lastAuthenticatedAt?: string;
+  useSystemBrowser?: boolean;
 }
 
 interface RegistryFile {

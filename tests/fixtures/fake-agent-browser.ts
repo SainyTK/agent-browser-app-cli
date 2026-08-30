@@ -128,15 +128,22 @@ if (command === "tab" && (!rest[0] || rest[0] === "list")) {
   const reddit = args.some((argument) =>
     argument.startsWith("agent-browser-app-reddit-"),
   );
+  const geminiNotebook =
+    args.includes("--cdp") &&
+    args.some((argument) => argument.startsWith("agent-browser-app-gnb-"));
   output({
     tabs: [
       {
         active: true,
         label: null,
         tabId: "t1",
-        title: reddit ? "Reddit" : "Home / X",
+        title: reddit ? "Reddit" : geminiNotebook ? "Gemini Notebook" : "Home / X",
         type: "page",
-        url: reddit ? "https://www.reddit.com/" : "https://x.com/home",
+        url: reddit
+          ? "https://www.reddit.com/"
+          : geminiNotebook
+            ? "https://notebooklm.google.com/"
+            : "https://x.com/home",
       },
     ],
   });

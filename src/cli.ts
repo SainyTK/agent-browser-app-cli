@@ -13,6 +13,7 @@ import {
   listSources,
   listNotebooks,
   login,
+  loginWithSystemBrowser,
   readNotebook,
   removeNotebooks,
   removeSources,
@@ -20,7 +21,7 @@ import {
 } from "./apps/gnb/service.ts";
 import {
   login as loginX,
-  loginWithSystemBrowser,
+  loginWithSystemBrowser as loginXWithSystemBrowser,
   readFeed,
   readProfile,
   resolveProfileUrl,
@@ -174,7 +175,7 @@ function usage(): string {
   return `agent-browser-app ${VERSION}
 
 Usage:
-  agent-browser-app gnb auth login [--account <email>] [--timeout <seconds>]
+  agent-browser-app gnb auth login [--account <email>] [--timeout <seconds>] [--system-browser]
   agent-browser-app gnb auth list [--json]
   agent-browser-app gnb auth switch <email-or-id>
   agent-browser-app gnb notebook list [--account <email-or-id>] [--headed] [--json]
@@ -214,14 +215,35 @@ async function handleGnbAuth(
   const command = args[0];
   const options = parseOptions(args.slice(1));
   if (command === "login") {
+    assertAllowedOptions(
+      options,
+      new Set(["account", "system-browser", "timeout"]),
+    );
+    if (options.positionals.length > 0) {
+      throw new CliError("gnb auth login does not accept positional arguments.", 2);
+    }
     const requestedAccount = stringOption(options, "account");
     const account = await registry.accountForLogin(requestedAccount);
     const timeoutSeconds = numberOption(options, "timeout", 600);
-    console.log(`Opening headed Chrome for account "${requestedAccount || account.email || account.id}".`);
-    const detectedEmail = await login(account, timeoutSeconds, () => {
-      console.log("Complete Google sign-in in the browser window. This command will continue automatically.");
-    });
-    const saved = await registry.saveAuthenticated(account, detectedEmail);
+    const systemBrowser = hasFlag(options, "system-browser");
+    console.log(
+      `Opening ${systemBrowser ? "system Google Chrome" : "headed Chrome"} for account "${requestedAccount || account.email || account.id}".`,
+    );
+    const detectedEmail = systemBrowser
+      ? await loginWithSystemBrowser(account, timeoutSeconds, () => {
+          console.log(
+            "Complete Google sign-in in the isolated Chrome window and wait for the Gemini Notebook home page. This command will capture the login and close the isolated browser automatically.",
+          );
+        })
+      : await login(account, timeoutSeconds, () => {
+          console.log(
+            "Complete Google sign-in in the browser window. This command will continue automatically.",
+          );
+        });
+    const saved = await registry.saveAuthenticated(
+      { ...account, useSystemBrowser: systemBrowser || undefined },
+      detectedEmail,
+    );
     console.log(`Authentication saved for ${saved.email || saved.id}.`);
     console.log(`Profile: ${saved.profileDir}`);
     console.log(`State: ${saved.stateFile}`);
@@ -229,6 +251,10 @@ async function handleGnbAuth(
   }
 
   if (command === "list") {
+    assertAllowedOptions(options, new Set(["json"]));
+    if (options.positionals.length > 0) {
+      throw new CliError("gnb auth list does not accept positional arguments.", 2);
+    }
     const result = await registry.list();
     if (hasFlag(options, "json")) {
       printJson(result);
@@ -249,9 +275,13 @@ async function handleGnbAuth(
   }
 
   if (command === "switch") {
+    assertAllowedOptions(options, new Set());
     const selector = options.positionals[0];
-    if (!selector) {
-      throw new CliError("auth switch requires an email address or account ID.", 2);
+    if (!selector || options.positionals.length > 1) {
+      throw new CliError(
+        "auth switch requires exactly one email address or account ID.",
+        2,
+      );
     }
     const account = await registry.switch(selector);
     console.log(`Active account: ${account.email || account.id}`);
@@ -289,7 +319,7 @@ async function handleXAuth(
       } for X account "${label}".`,
     );
     const detectedUsername = systemBrowser
-      ? await loginWithSystemBrowser(account, timeoutSeconds, () => {
+      ? await loginXWithSystemBrowser(account, timeoutSeconds, () => {
           console.log(
             "Complete X sign-in in the isolated Chrome window and wait for the X home feed. This command will capture the login and close the isolated browser automatically.",
           );
