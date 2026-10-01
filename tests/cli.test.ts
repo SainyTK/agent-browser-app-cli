@@ -947,6 +947,24 @@ describe("agent-browser-app CLI with legacy test adapter", () => {
     expect(runtime.selectedSourceIndexes).toEqual([1]);
   }, 20_000);
 
+  test("waits for chat history hydration before filling a question", async () => {
+    const home = await createHome();
+    expect((await runCli(["gnb", "auth", "login", "--timeout", "2"], home)).exitCode).toBe(0);
+    const result = await runCli(["gnb", "ask", "question", "--id", "abc-123", "--timeout", "8", "--json"], home, {
+      FAKE_CHAT_LOADING_POLLS: "6",
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const invocations = (await readFile(join(home, "fake-invocations.jsonl"), "utf8")).trim().split("\n").map((line) => JSON.parse(line) as string[]);
+    const fillIndex = invocations.findIndex((args) => args.includes("fill"));
+    const beforeFill = invocations.slice(0, fillIndex);
+    const polls = beforeFill.filter((args) => {
+      const encodedIndex = args.indexOf("-b");
+      return encodedIndex >= 0 && Buffer.from(args[encodedIndex + 1]!, "base64").toString("utf8").includes("aba:chat-state");
+    });
+    expect(polls.length).toBeGreaterThan(6);
+    expect(JSON.parse(result.stdout).answer).toBe("Fixture answer");
+  }, 20_000);
+
   test("reports a useful error before login", async () => {
     const home = await createHome();
     const result = await runCli(["gnb", "notebook", "list"], home);
@@ -1226,11 +1244,12 @@ describe("agent-browser-app CLI with legacy test adapter", () => {
     expect(invalidUrl.stderr).toContain("Invalid source URL");
   }, 35_000);
 
-  test("keeps a Drive URL result selected before inserting it", async () => {
+  test("waits for picker hydration and keeps a Drive URL result selected before inserting it", async () => {
     const home = await createHome();
     const driveUrl =
       "https://drive.google.com/file/d/fixture-drive-id/view?usp=sharing";
     let selectScriptCalls = 0;
+    let pickerStateReads = 0;
     let sourceInserted = false;
     const server = Bun.serve({
       port: 0,
@@ -1284,10 +1303,11 @@ describe("agent-browser-app CLI with legacy test adapter", () => {
             const expression = message.params.expression as string;
             let value: unknown = true;
             if (expression.includes("aba:drive-picker-state")) {
+              pickerStateReads += 1;
               value = {
                 ready: true,
                 searchValue: driveUrl,
-                searching: false,
+                searching: pickerStateReads <= 6,
                 optionCount: 1,
                 exactMatchCount: 0,
               };
@@ -1344,6 +1364,10 @@ describe("agent-browser-app CLI with legacy test adapter", () => {
       expect(result.exitCode).toBe(0);
       expect(selectScriptCalls).toBe(0);
       expect(sourceInserted).toBe(true);
+      const invocations = (await readFile(join(home, "fake-invocations.jsonl"), "utf8")).trim().split("\n").map((line) => JSON.parse(line) as string[]);
+      const frameFillIndex = invocations.findIndex((args) => args.includes("frame"));
+      const initialPickerReads = invocations.slice(0, frameFillIndex).filter((args) => args[0] === "frame-eval" && Buffer.from(args[2]!, "base64").toString("utf8").includes("aba:drive-picker-state"));
+      expect(initialPickerReads.length).toBeGreaterThan(6);
       expect(
         JSON.parse(result.stdout).sources.map(
           (source: { title: string }) => source.title,

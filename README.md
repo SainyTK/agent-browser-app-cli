@@ -88,6 +88,10 @@ Make sure that directory is on `PATH`.
 
 Chrome is still required for the default configuration.
 The CLI does not require an agent-browser executable.
+Compiled releases include an exact-version Playwright runtime directory beside the executable.
+The installer keeps the executable and runtime together in a versioned directory and points both command names to it.
+Do not move the executable without its runtime directory.
+See [release packaging](release/packaging.md) for details.
 
 ## Install for local development
 
@@ -434,13 +438,15 @@ Every release contains standalone archives and SHA-256 checksum files for macOS 
 
 `tests/browser.test.ts` uses real Chrome with temporary isolated profiles and local fixture pages.
 It covers cross-origin frames, file uploads, persistent profiles, storage-state import and export, and native system Chrome CDP attachment.
-CLI tests are being migrated from the fake agent-browser executable to a Bun preload that mocks the browser-session boundary.
-Compiled-release Playwright packaging is a separate build task; passing source tests alone does not verify a release archive.
+CLI tests use a Bun preload that mocks the browser-session boundary.
+Their legacy fixture adapter is test-only and does not verify Playwright itself.
+Compiled-release tests install an archive, run outside the repository through symlink aliases, and verify browser launch, interaction, storage, and CDP attachment.
+CI installs managed Chromium for these checks.
 
-Live Gemini Notebook `notebook list`, `notebook read`, and `notebook source list`, plus Reddit `feed`, passed migration checks with cloned accounts.
-Live X verification is pending.
-These checks do not establish that every live authentication, query, source mutation, or profile workflow works after the migration.
-Real authenticated verification still requires a user-controlled login.
+Live checks used isolated copies of the user's saved accounts.
+NotebookLM and Reddit results, cleanup, and remaining coverage limits are recorded in [migration verification](docs/playwright-migration-verification.md).
+No X account was configured in the default directory, and an interactive login attempt did not complete.
+X live feed and profile verification still requires the user to sign in.
 The following commands are manual checks, not a list of completed live tests:
 
 ```bash

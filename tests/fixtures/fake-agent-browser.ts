@@ -430,6 +430,7 @@ if (command === "tab" && (!rest[0] || rest[0] === "list")) {
     output({
       result: {
         pairs,
+        loading: !state.submitted && state.responsePolls <= Number(process.env.FAKE_CHAT_LOADING_POLLS || 0),
       },
     });
   } else if (script.includes("aba:source-selection")) {

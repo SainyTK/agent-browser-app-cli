@@ -114,9 +114,8 @@ Keep `tests/browser.test.ts` as real Chrome coverage with local pages and tempor
 Validate command help, error output, exit codes, and JSON output.
 Verify Playwright packaging in compiled releases separately from source tests.
 Do not infer live workflow coverage from mocked CLI or local browser tests.
-Migration live checks passed for Gemini Notebook list, read, and source list, plus Reddit feed with cloned accounts.
-X live verification is pending.
-Do not claim that all live authentication or application workflows have passed.
+Record live verification commands, results, and any blocked workflows in a verification document.
+Do not claim that all live authentication or application workflows have passed unless each has been verified.
 
 Run these checks before handing off a change:
 

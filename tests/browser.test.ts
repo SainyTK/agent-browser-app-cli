@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { PlaywrightBrowser } from "../src/browser/playwright.ts";
 import type { Account } from "../src/registry.ts";
 import { startSystemBrowser } from "../src/apps/system-browser.ts";
-import { markConfirmNotebookRemovalScript } from "../src/apps/gnb/browser-scripts.ts";
+import { markConfirmNotebookRemovalScript, readChatStateScript } from "../src/apps/gnb/browser-scripts.ts";
 
 const homes: string[] = [];
 const sessions: PlaywrightBrowser[] = [];
@@ -140,6 +140,15 @@ describe("Playwright browser engine with real Chrome", () => {
     await writeFile(value.stateFile, "SECRET invalid JSON");
     await expect(session(value).open(baseUrl)).rejects.toThrow("Could not read authentication storage state");
   });
+
+  test("reports chat loading only for visible progress controls", async () => {
+    const browser = session(await account());
+    await browser.open(baseUrl);
+    await browser.eval(`document.body.innerHTML = '<div role="progressbar" style="width:24px;height:24px"></div>'`);
+    expect((await browser.eval<{ loading: boolean }>(readChatStateScript)).loading).toBe(true);
+    await browser.eval(`document.querySelector('[role="progressbar"]').style.display = 'none'`);
+    expect((await browser.eval<{ loading: boolean }>(readChatStateScript)).loading).toBe(false);
+  }, 30_000);
 
   test("recognizes the current NotebookLM deletion dialog without matching other dialogs", async () => {
     const browser = session(await account());

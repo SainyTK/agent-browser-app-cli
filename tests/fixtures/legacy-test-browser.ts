@@ -1,4 +1,4 @@
-import { access, chmod, mkdir } from "node:fs/promises";
+import { access, appendFile, chmod, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { CliError } from "../../src/errors.ts";
 import type { Account } from "../../src/registry.ts";
@@ -61,6 +61,8 @@ export class LegacyTestBrowser implements BrowserSession {
     if (!frameUrlIncludes.includes("docs.google.com/picker")) {
       throw new Error(`Unsupported legacy fixture frame: ${frameUrlIncludes}`);
     }
+    const log = this.environment.FAKE_AGENT_BROWSER_LOG;
+    if (log) await appendFile(log, `${JSON.stringify(["frame-eval", frameUrlIncludes, Buffer.from(script).toString("base64")])}\n`);
     const url = this.environment.FAKE_CDP_URL;
     if (!url) throw new Error("FAKE_CDP_URL is required by the legacy frame fixture.");
     // The local test server returns scripted values, not browser evaluations.

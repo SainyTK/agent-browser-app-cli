@@ -1170,6 +1170,31 @@ interface DrivePickerState {
   exactMatchCount: number;
 }
 
+async function waitForDrivePickerReady(
+  browser: BrowserSession,
+  target: string,
+): Promise<DrivePickerState> {
+  const deadline = Date.now() + 20_000;
+  let signature = "";
+  let stablePolls = 0;
+  while (Date.now() < deadline) {
+    const state = await browser.evalInFrame<DrivePickerState>(
+      "docs.google.com/picker/",
+      readDrivePickerStateScript(target),
+    );
+    const nextSignature = JSON.stringify(state);
+    if (state.ready && !state.searching && nextSignature === signature) {
+      stablePolls += 1;
+      if (stablePolls >= 3) return state;
+    } else {
+      stablePolls = 0;
+    }
+    signature = nextSignature;
+    await delay(500);
+  }
+  throw new CliError("Google Drive picker did not finish loading before search.");
+}
+
 async function waitForDrivePickerResults(
   browser: BrowserSession,
   target: string,
@@ -1248,10 +1273,7 @@ export async function addDriveSource(
     `Drive item "${normalizedTarget}"`,
     async (browser) => {
       await markAndClickSourceOption(browser, "drive");
-      let picker = await browser.evalInFrame<DrivePickerState>(
-        "docs.google.com/picker/",
-        readDrivePickerStateScript(normalizedTarget),
-      );
+      let picker = await waitForDrivePickerReady(browser, normalizedTarget);
       if (picker.exactMatchCount === 0) {
         const searchReady = await waitUntil(
           () =>

@@ -1,6 +1,7 @@
 import { readFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { PlaywrightBrowser } from "../../src/browser/playwright.ts";
+import { chromium } from "playwright";
 
 const [url, home] = process.argv.slice(2);
 if (!url || !home) throw new Error("Expected a local fixture URL and isolated home");
@@ -19,8 +20,12 @@ try {
 }
 
 // Verify the native WebSocket public connectOverCDP path in a compiled binary.
-const chrome = process.env.AGENT_BROWSER_APP_BROWSER_BIN || (process.platform === "darwin"
-  ? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" : "/usr/bin/google-chrome");
+const chrome = process.env.AGENT_BROWSER_APP_BROWSER_BIN || (process.env.AGENT_BROWSER_APP_BROWSER_CHANNEL === "chromium"
+  ? chromium.executablePath()
+  : process.platform === "darwin"
+    ? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+    : Bun.which("google-chrome") || Bun.which("google-chrome-stable") || Bun.which("chromium") || Bun.which("chromium-browser"));
+if (!chrome) throw new Error("Install Chrome or select bundled Chromium for release smoke tests.");
 const attachProfile = join(home, "attach-profile");
 await mkdir(attachProfile, { recursive: true });
 const child = Bun.spawn([chrome, "--headless=new", "--remote-debugging-port=0", `--user-data-dir=${attachProfile}`, "--no-first-run", "--no-default-browser-check", "about:blank"], { stdout: "ignore", stderr: "ignore" });

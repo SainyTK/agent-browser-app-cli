@@ -79,7 +79,10 @@ export class PlaywrightBrowser implements BrowserSession {
       await lstat(join(this.account.profileDir, "SingletonLock"));
       throw new CliError("The isolated browser profile is already open. Close that browser and retry.");
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      if (error instanceof CliError) throw error;
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw new CliError("Could not inspect the isolated browser profile lock.");
+      }
     }
     // A real Chrome profile is authoritative. Import legacy storage only into a fresh profile.
     const hasProfile = await exists(join(this.account.profileDir, "Default", "Preferences"));
