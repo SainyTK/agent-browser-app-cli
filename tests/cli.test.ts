@@ -11,10 +11,7 @@ import { join, resolve } from "node:path";
 import { listNotebooksScript } from "../src/apps/gnb/browser-scripts.ts";
 
 const cli = resolve(import.meta.dir, "../src/cli.ts");
-const fakeBrowser = resolve(
-  import.meta.dir,
-  "fixtures/fake-agent-browser.ts",
-);
+const browserPreload = resolve(import.meta.dir, "fixtures/browser-preload.ts");
 const fakeSystemBrowser = resolve(
   import.meta.dir,
   "fixtures/fake-system-browser.ts",
@@ -27,12 +24,13 @@ async function runCli(
   environment: NodeJS.ProcessEnv = {},
   command = ["bun", cli],
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
-  const processHandle = Bun.spawn([...command, ...args], {
+  // Preload for both the CLI entry point and executable aliases.
+  const entryPoint = command[0] === "bun" ? command.slice(1) : command;
+  const processHandle = Bun.spawn([process.execPath, "--preload", browserPreload, ...entryPoint, ...args], {
     stdout: "pipe",
     stderr: "pipe",
     env: {
       ...process.env,
-      AGENT_BROWSER_BIN: fakeBrowser,
       AGENT_BROWSER_HOME: home,
       FAKE_AGENT_BROWSER_STATE: join(home, "fake-runtime.json"),
       FAKE_AGENT_BROWSER_LOG: join(home, "fake-invocations.jsonl"),
@@ -60,7 +58,10 @@ afterEach(async () => {
   );
 });
 
-describe("agent-browser-app CLI", () => {
+// Browser command logs below assert the legacy test adapter's arguments.
+// They do not assert Playwright launch options or exercise the real engine.
+// Real browser behavior belongs in tests/browser.test.ts.
+describe("agent-browser-app CLI with legacy test adapter", () => {
   test("lists Gemini Notebook entries without invoking application event handlers", () => {
     expect(listNotebooksScript).not.toContain("__zone_symbol__clickfalse");
     expect(listNotebooksScript).not.toContain("history.pushState");
@@ -296,7 +297,7 @@ describe("agent-browser-app CLI", () => {
         "reddit",
         "auth",
         "login",
-        "--agent-browser",
+        "--playwright",
         "--timeout",
         "2",
       ],
@@ -306,6 +307,7 @@ describe("agent-browser-app CLI", () => {
     expect(loginResult.stdout).toContain(
       "Authentication saved for u/fixture_redditor.",
     );
+    expect(loginResult.stderr).not.toContain("deprecated");
 
     const accountsResult = await runCli(
       ["reddit", "auth", "list", "--json"],
@@ -479,14 +481,14 @@ describe("agent-browser-app CLI", () => {
         "reddit",
         "auth",
         "login",
-        "--agent-browser",
+        "--playwright",
         "--system-browser",
       ],
       home,
     );
     expect(conflictingLoginBrowsers.exitCode).toBe(2);
     expect(conflictingLoginBrowsers.stderr).toContain(
-      "only one of --agent-browser or --system-browser",
+      "only one of --playwright or --system-browser",
     );
 
     const conflictingFeedBrowsers = await runCli(
@@ -497,6 +499,28 @@ describe("agent-browser-app CLI", () => {
     expect(conflictingFeedBrowsers.stderr).toContain(
       "only one of --headed or --headless",
     );
+  });
+
+  test("accepts the explicit deprecated Reddit browser alias and warns", async () => {
+    const home = await createHome();
+    const login = await runCli(
+      ["reddit", "auth", "login", "--agent-browser", "--timeout", "2"],
+      home,
+    );
+    expect(login.exitCode).toBe(0);
+    expect(login.stderr).toContain("Warning: --agent-browser is deprecated. Use --playwright.");
+    expect(login.stdout).toContain("Authentication saved for u/fixture_redditor.");
+    const accounts = await runCli(["reddit", "auth", "list", "--json"], home);
+    expect(accounts.exitCode).toBe(0);
+    expect(JSON.parse(accounts.stdout).accounts[0].identity).toBe("fixture_redditor");
+
+    const conflict = await runCli(
+      ["reddit", "auth", "login", "--agent-browser", "--system-browser"],
+      home,
+    );
+    expect(conflict.exitCode).toBe(2);
+    expect(conflict.stderr).toContain("only one of --playwright or --system-browser");
+    expect(conflict.stderr).toContain("--agent-browser is a deprecated alias for --playwright");
   });
 
   test("defaults Reddit login to an isolated system browser", async () => {
