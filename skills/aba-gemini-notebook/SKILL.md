@@ -8,6 +8,13 @@ description: Use the authenticated agent-browser-app CLI to interact with Gemini
 Use `aba gnb` for browser-driven Gemini Notebook operations.
 Run the requested operation when the user wants an action performed.
 Only explain commands without running them when the user asks for instructions.
+ABA uses Playwright under Bun and does not require an agent-browser executable.
+It opens an isolated persistent system Chrome profile by default.
+Existing `AGENT_BROWSER_HOME` paths remain compatible.
+A populated profile is authoritative; the CLI imports `state.json` only into a fresh profile.
+Do not inspect those files yourself.
+For optional managed Chromium, run `bunx playwright install chromium` and set `AGENT_BROWSER_APP_BROWSER_CHANNEL=chromium`.
+`AGENT_BROWSER_APP_BROWSER_BIN` overrides the Playwright executable.
 
 ## Operating rules
 
@@ -44,6 +51,16 @@ aba gnb auth login --account "you@example.com"
 
 Login opens a visible browser and may require the user to choose an account, provide a passkey, or complete two-factor authentication.
 Allow the command to continue until it confirms that authentication was saved.
+If Google rejects the Playwright-controlled window, use native system Chrome login:
+
+```bash
+aba gnb auth login --account "you@example.com" --system-browser
+```
+
+Playwright attaches over CDP through Bun's native WebSocket transport to capture authentication.
+The launcher closes the isolated browser afterward.
+`AGENT_BROWSER_APP_SYSTEM_BROWSER_BIN` overrides the native login executable.
+Notebook operations reopen the same profile through Playwright and run headless unless you pass `--headed`.
 Select the default account when requested:
 
 ```bash
@@ -159,6 +176,8 @@ aba gnb notebook source remove \
 ## Capability boundary
 
 Use only commands shown by `aba --help`.
+Live list, read, and source list checks passed during the Playwright migration with cloned accounts.
+That does not verify every live login, query, upload, or mutation workflow.
 If the user requests an unsupported Gemini Notebook action, confirm that it is absent from current help, state the limitation plainly, and offer the closest supported operation.
 
 ## Active development
