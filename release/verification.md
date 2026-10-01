@@ -46,9 +46,8 @@ The executable and its runtime are also retained in that directory.
 
 ## Full suite status
 
-`bun run check && bun test` exited 1, with 16 passes, 12 failures and 134 assertions.
-The full log is `/tmp/aba-playwright-release-tests.log`.
-All seven real-browser tests and all five packaging tests passed.
-All twelve failures are in `tests/cli.test.ts`, which still has old agent-browser fake-process workflows and an old Reddit browser-option error expectation after the engine merge.
-The packaging changes do not modify that file, browser tests, application source, package metadata, or the dependency lockfile.
-CLI fixture migration remains outside this packaging task.
+The original isolated packaging branch had twelve failures in the then-unmigrated CLI fixtures.
+The CLI fixture migration has since been integrated.
+`bun run check && bun test` now exits 0 with 32 passes, no failures, and 312 assertions.
+The compiled-release smoke also passes with managed Chromium.
+See [migration verification](../docs/playwright-migration-verification.md) for the integrated source and live application checks.

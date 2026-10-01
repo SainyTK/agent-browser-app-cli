@@ -16,9 +16,8 @@ AGENT_BROWSER_APP_BROWSER_CHANNEL=chromium bun test tests/release-packaging.test
 ```
 
 Type checking passed.
-The integrated suite passed with 32 tests and no failures before the final Drive readiness change.
-Focused chat and Drive hydration regression tests passed after that change.
-The full suite is rerun before integration.
+The integrated suite passed with 32 tests, no failures, and 312 assertions after the final Drive readiness change.
+Focused chat and Drive hydration regression tests also passed.
 The compiled-release smoke test passed with system Chrome and managed Chromium.
 It installs an archive, resolves aliases outside the repository, rejects missing or mismatched runtime packages, and checks browser interaction, state saving, CDP attachment, and disconnect ownership.
 
