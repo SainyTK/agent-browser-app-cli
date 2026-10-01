@@ -266,7 +266,7 @@ export const markConfirmNotebookRemovalScript = String.raw`
   const dialogs = Array.from(
     document.querySelectorAll('[role="dialog"], mat-dialog-container')
   ).filter((dialog) =>
-    /delete notebook everywhere|permanently deleted from all locations/i.test(
+    /delete (?:this )?notebook(?: everywhere)?|permanently deleted (?:from|across) all locations/i.test(
       dialog.textContent || ""
     )
   );

@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { PlaywrightBrowser } from "../src/browser/playwright.ts";
 import type { Account } from "../src/registry.ts";
 import { startSystemBrowser } from "../src/apps/system-browser.ts";
+import { markConfirmNotebookRemovalScript } from "../src/apps/gnb/browser-scripts.ts";
 
 const homes: string[] = [];
 const sessions: PlaywrightBrowser[] = [];
@@ -139,6 +140,16 @@ describe("Playwright browser engine with real Chrome", () => {
     await writeFile(value.stateFile, "SECRET invalid JSON");
     await expect(session(value).open(baseUrl)).rejects.toThrow("Could not read authentication storage state");
   });
+
+  test("recognizes the current NotebookLM deletion dialog without matching other dialogs", async () => {
+    const browser = session(await account());
+    await browser.open(baseUrl);
+    await browser.eval(`document.body.innerHTML = '<div role="dialog">Delete this notebook? This notebook and all of its content will be permanently deleted across all locations, including Gemini.<button>Cancel</button><button>Delete</button></div>'`);
+    expect(await browser.eval<boolean>(markConfirmNotebookRemovalScript)).toBe(true);
+    expect(await browser.eval<string>(`document.querySelector('[data-agent-browser-app-target="confirm-notebook-removal"]').textContent`)).toBe("Delete");
+    await browser.eval(`document.body.innerHTML = '<div role="dialog">Delete this source?<button>Delete</button></div>'`);
+    expect(await browser.eval<boolean>(markConfirmNotebookRemovalScript)).toBe(false);
+  }, 30_000);
 
   test("redacts browser evaluation errors and closes the session", async () => {
     const browser = session(await account());
