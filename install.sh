@@ -149,9 +149,20 @@ if [ ! -f "${temporary_dir}/agent-browser-app" ]; then
   exit 1
 fi
 
+if [ ! -f "${temporary_dir}/agent-browser-app.runtime/node_modules/playwright/package.json" ] ||
+   [ ! -f "${temporary_dir}/agent-browser-app.runtime/node_modules/playwright-core/package.json" ]; then
+  echo "Error: release archive does not contain the Playwright runtime." >&2
+  exit 1
+fi
+
+# Keep each executable beside its runtime. Resolve aliases to that executable,
+# never to a shared runtime that a later installation might replace.
 mkdir -p "$install_dir"
-install -m 755 "${temporary_dir}/agent-browser-app" \
-  "${install_dir}/agent-browser-app"
+release_dir="$(mktemp -d "${install_dir}/.agent-browser-app-release.XXXXXX")"
+install -m 755 "${temporary_dir}/agent-browser-app" "$release_dir/agent-browser-app"
+cp -R "${temporary_dir}/agent-browser-app.runtime" "$release_dir/agent-browser-app.runtime"
+release_name="${release_dir##*/}"
+ln -sf "${release_name}/agent-browser-app" "${install_dir}/agent-browser-app"
 ln -sf "agent-browser-app" "${install_dir}/aba"
 
 echo "Installed agent-browser-app ${tag#v} (${channel}) to ${install_dir}/agent-browser-app"
