@@ -1,6 +1,6 @@
 import { access, realpath, stat } from "node:fs/promises";
 import { basename } from "node:path";
-import { AgentBrowser } from "../../agent-browser.ts";
+import { createBrowser, type BrowserSession } from "../../browser/index.ts";
 import {
   NOTEBOOK_HOME_URL,
   NOTEBOOK_URL_PATTERN,
@@ -124,7 +124,7 @@ function isReasoningDisclosure(value: string): boolean {
 }
 
 async function readStableChatState(
-  browser: AgentBrowser,
+  browser: BrowserSession,
   timeoutMs = 10_000,
 ): Promise<ChatState> {
   const deadline = Date.now() + timeoutMs;
@@ -163,7 +163,7 @@ async function startAuthenticatedSystemBrowser(
   timeoutSeconds: number,
   onStarted: () => void = () => undefined,
 ): Promise<{
-  browser: AgentBrowser;
+  browser: BrowserSession;
   close: () => Promise<void>;
 }> {
   const systemBrowser = await startSystemBrowser(
@@ -172,7 +172,7 @@ async function startAuthenticatedSystemBrowser(
     process.env,
     onStarted,
   );
-  const browser = new AgentBrowser(account);
+  const browser = createBrowser(account);
   try {
     await browser.attach(systemBrowser.cdpPort);
     const deadline = Date.now() + timeoutSeconds * 1000;
@@ -214,7 +214,7 @@ async function startAuthenticatedSystemBrowser(
 
 async function runAuthenticated<T>(
   account: Account,
-  operation: (browser: AgentBrowser) => Promise<T>,
+  operation: (browser: BrowserSession) => Promise<T>,
 ): Promise<T> {
   await requireState(account);
   if (account.useSystemBrowser) {
@@ -225,7 +225,7 @@ async function runAuthenticated<T>(
       await session.close();
     }
   }
-  const browser = new AgentBrowser(account);
+  const browser = createBrowser(account);
   try {
     return await operation(browser);
   } finally {
@@ -246,7 +246,7 @@ export async function login(
   timeoutSeconds: number,
   onWaiting: () => void,
 ): Promise<string | undefined> {
-  const browser = new AgentBrowser(account);
+  const browser = createBrowser(account);
   try {
     await browser.open(NOTEBOOK_HOME_URL, true);
     onWaiting();
@@ -276,7 +276,6 @@ export async function loginWithSystemBrowser(
   timeoutSeconds: number,
   onWaiting: () => void,
 ): Promise<string | undefined> {
-  await new AgentBrowser(account).close();
   const session = await startAuthenticatedSystemBrowser(
     account,
     timeoutSeconds,
@@ -614,7 +613,7 @@ function resolveSelectedSources(
 }
 
 async function selectSourcesForQuestion(
-  browser: AgentBrowser,
+  browser: BrowserSession,
   sources: SourceSummary[],
   selectedSources: SourceSummary[],
 ): Promise<void> {
@@ -871,7 +870,7 @@ export async function uploadNotebookFiles(
 }
 
 async function loadSources(
-  browser: AgentBrowser,
+  browser: BrowserSession,
   timeoutMs = 30_000,
 ): Promise<SourceListState> {
   await delay(2000);
@@ -935,7 +934,7 @@ function addedSourcesSince(
 }
 
 async function waitForAddedSources(
-  browser: AgentBrowser,
+  browser: BrowserSession,
   baseline: SourceSummary[],
   expectedCount: number,
   timeoutSeconds: number,
@@ -972,7 +971,7 @@ async function waitForAddedSources(
 }
 
 async function markAndClickSourceOption(
-  browser: AgentBrowser,
+  browser: BrowserSession,
   option: "copied-text" | "websites" | "drive",
 ): Promise<void> {
   const marked = await waitUntil(
@@ -998,7 +997,7 @@ async function addSourcesFromDialog(
   timeoutSeconds: number,
   expectedCount: number,
   description: string,
-  submit: (browser: AgentBrowser) => Promise<void>,
+  submit: (browser: BrowserSession) => Promise<void>,
 ): Promise<AddedSourcesResult> {
   const url = directNotebookUrl(target);
   const match = url?.match(NOTEBOOK_URL_PATTERN);
@@ -1171,7 +1170,7 @@ interface DrivePickerState {
 }
 
 async function waitForDrivePickerResults(
-  browser: AgentBrowser,
+  browser: BrowserSession,
   target: string,
 ): Promise<DrivePickerState> {
   await delay(1000);

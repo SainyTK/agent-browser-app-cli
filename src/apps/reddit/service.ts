@@ -1,5 +1,5 @@
 import { access } from "node:fs/promises";
-import { AgentBrowser } from "../../agent-browser.ts";
+import { createBrowser, type BrowserSession } from "../../browser/index.ts";
 import { CliError } from "../../errors.ts";
 import type { Account } from "../../registry.ts";
 import {
@@ -124,10 +124,10 @@ async function requireState(account: Account): Promise<void> {
 
 async function runAuthenticated<T>(
   account: Account,
-  operation: (browser: AgentBrowser) => Promise<T>,
+  operation: (browser: BrowserSession) => Promise<T>,
 ): Promise<T> {
   await requireState(account);
-  const browser = new AgentBrowser(account, "reddit");
+  const browser = createBrowser(account, "reddit");
   try {
     return await operation(browser);
   } finally {
@@ -152,7 +152,7 @@ export async function login(
   timeoutSeconds: number,
   onWaiting: () => void,
 ): Promise<string> {
-  const browser = new AgentBrowser(account, "reddit");
+  const browser = createBrowser(account, "reddit");
   try {
     await browser.open(REDDIT_LOGIN_URL, true);
     onWaiting();
@@ -166,7 +166,7 @@ export async function login(
     );
     if (state.blocked) {
       throw new CliError(
-        "Reddit blocked the automated login browser with a verification page. Retry without --agent-browser.",
+        "Reddit blocked the automated login browser with a verification page. Retry without --playwright.",
       );
     }
     if (!state.authenticated) {
@@ -193,14 +193,13 @@ export async function loginWithSystemBrowser(
   onWaiting: () => void,
 ): Promise<string> {
   const deadline = Date.now() + timeoutSeconds * 1000;
-  await new AgentBrowser(account, "reddit").close();
   const systemBrowser = await startSystemBrowser(
     account,
     REDDIT_SYSTEM_BROWSER_APP.loginUrl,
     process.env,
     onWaiting,
   );
-  const browser = new AgentBrowser(account, "reddit");
+  const browser = createBrowser(account, "reddit");
   try {
     await waitForSystemBrowserLogin(
       systemBrowser,

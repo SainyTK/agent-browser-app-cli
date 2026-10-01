@@ -1,5 +1,5 @@
 import { access } from "node:fs/promises";
-import { AgentBrowser } from "../../agent-browser.ts";
+import { createBrowser, type BrowserSession } from "../../browser/index.ts";
 import { CliError } from "../../errors.ts";
 import type { Account } from "../../registry.ts";
 import {
@@ -125,10 +125,10 @@ async function requireState(account: Account): Promise<void> {
 
 async function runAuthenticated<T>(
   account: Account,
-  operation: (browser: AgentBrowser) => Promise<T>,
+  operation: (browser: BrowserSession) => Promise<T>,
 ): Promise<T> {
   await requireState(account);
-  const browser = new AgentBrowser(account, "x");
+  const browser = createBrowser(account, "x");
   try {
     return await operation(browser);
   } finally {
@@ -151,7 +151,7 @@ export async function login(
     startUrl?: string;
   } = {},
 ): Promise<string | undefined> {
-  const browser = new AgentBrowser(account, "x");
+  const browser = createBrowser(account, "x");
   try {
     await browser.open(
       options.startUrl || X_LOGIN_URL,
@@ -187,14 +187,13 @@ export async function loginWithSystemBrowser(
   timeoutSeconds: number,
   onWaiting: () => void,
 ): Promise<string | undefined> {
-  await new AgentBrowser(account, "x").close();
   const systemBrowser = await startSystemBrowser(
     account,
     X_SYSTEM_BROWSER_APP.loginUrl,
     process.env,
     onWaiting,
   );
-  const browser = new AgentBrowser(account, "x");
+  const browser = createBrowser(account, "x");
   try {
     await waitForSystemBrowserLogin(
       systemBrowser,
