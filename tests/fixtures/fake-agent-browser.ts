@@ -107,6 +107,7 @@ function output(data: unknown): void {
 function commandIndex(): number {
   const commands = new Set([
     "open",
+    "frame",
     "get",
     "eval",
     "click",
@@ -583,6 +584,8 @@ if (command === "tab" && (!rest[0] || rest[0] === "list")) {
   output({ path: destination });
 } else if (command === "state" && rest[0] === "load") {
   output({ loaded: true, path: rest[1] });
+} else if (command === "frame") {
+  output({ ready: true });
 } else if (command === "close") {
   console.log("Browser closed");
 } else {
