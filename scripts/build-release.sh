@@ -31,12 +31,7 @@ mkdir -p "$output_dir"
 binary="${output_dir}/agent-browser-app"
 archive="agent-browser-app-${tag}-${platform}-${architecture}.tar.gz"
 
-bun build \
-  --compile \
-  --target="$target" \
-  --define "AGENT_BROWSER_APP_BUILD_VERSION=\"${cli_version}\"" \
-  --outfile="$binary" \
-  src/cli.ts
+bun scripts/compile-release.ts "$cli_version" "$target" "$output_dir"
 
 if [ "$platform" = "darwin" ]; then
   codesign --remove-signature "$binary" >/dev/null 2>&1 || true
@@ -48,7 +43,8 @@ if [ "$platform" = "darwin" ]; then
     "$binary"
 fi
 
-tar -czf "${output_dir}/${archive}" -C "$output_dir" agent-browser-app
+tar -czf "${output_dir}/${archive}" -C "$output_dir" \
+  agent-browser-app agent-browser-app.runtime
 
 if command -v sha256sum >/dev/null 2>&1; then
   (
