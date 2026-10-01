@@ -749,7 +749,15 @@ export const readChatStateScript = String.raw`
     );
     return { question, answer, complete };
   }).filter((pair) => pair.question || pair.answer);
-  return { pairs };
+  const loading = Array.from(
+    document.querySelectorAll('[role="progressbar"], mat-progress-spinner')
+  ).some((element) => {
+    const rect = element.getBoundingClientRect();
+    const style = getComputedStyle(element);
+    return rect.width > 0 && rect.height > 0 &&
+      style.visibility !== "hidden" && style.display !== "none";
+  });
+  return { pairs, loading };
 })()
 `;
 

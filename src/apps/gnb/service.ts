@@ -76,6 +76,7 @@ interface ChatPair {
 
 interface ChatState {
   pairs: ChatPair[];
+  loading?: boolean;
 }
 
 const delay = (milliseconds: number) =>
@@ -125,7 +126,7 @@ function isReasoningDisclosure(value: string): boolean {
 
 async function readStableChatState(
   browser: BrowserSession,
-  timeoutMs = 10_000,
+  timeoutMs = 30_000,
 ): Promise<ChatState> {
   const deadline = Date.now() + timeoutMs;
   let latest = await browser.eval<ChatState>(readChatStateScript);
@@ -137,7 +138,7 @@ async function readStableChatState(
     const signature = JSON.stringify(latest);
     if (signature === previousSignature) {
       stablePolls += 1;
-      if (stablePolls >= 3) {
+      if (stablePolls >= 3 && !latest.loading) {
         return latest;
       }
     } else {
@@ -145,7 +146,7 @@ async function readStableChatState(
       stablePolls = 1;
     }
   }
-  return latest;
+  throw new CliError("Gemini Notebook chat did not finish loading before the question could be submitted.");
 }
 
 async function requireState(account: Account): Promise<void> {
