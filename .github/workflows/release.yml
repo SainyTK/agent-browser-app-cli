@@ -37,7 +37,12 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Install test browser
+        run: bunx playwright install --with-deps chromium
+
       - name: Run checks
+        env:
+          AGENT_BROWSER_APP_BROWSER_CHANNEL: chromium
         run: bun run verify
 
       - name: Determine release metadata

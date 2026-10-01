@@ -108,7 +108,10 @@ describe("Playwright browser engine with real Chrome", () => {
   test("attaches to system Chrome and disconnects without terminating its browser", async () => {
     const value = await account();
     await mkdir(value.profileDir, { recursive: true, mode: 0o700 });
-    const system = await startSystemBrowser(value, baseUrl);
+    const system = await startSystemBrowser(value, baseUrl, {
+      ...process.env,
+      AGENT_BROWSER_APP_SYSTEM_BROWSER_BIN: join(import.meta.dir, "support/headless-chrome.ts"),
+    });
     try {
       const browser = session(value);
       await browser.attach(system.cdpPort);
