@@ -15,8 +15,7 @@ export const readAuthStateScript = String.raw`
   ]);
   const profileCandidates = [
     document.querySelector('a[data-testid="AppTabBar_Profile_Link"]'),
-    document.querySelector('nav[aria-label="Primary"] a[aria-label*="Profile" i]'),
-    document.querySelector('a[aria-label="Profile"]')
+    document.querySelector('nav[aria-label="Primary"] a[aria-label*="Profile" i]')
   ].filter(Boolean);
   let username = null;
   for (const candidate of profileCandidates) {
@@ -35,15 +34,11 @@ export const readAuthStateScript = String.raw`
     }
   }
   const path = location.pathname.replace(/\/+$/, "") || "/";
-  const home = path === "/home";
   const authenticated = Boolean(
     username ||
     (
-      home &&
-      (
-        document.querySelector('article, [data-testid="primaryColumn"]') ||
-        document.querySelector('nav[aria-label="Primary"]')
-      )
+      document.querySelector('[data-testid="SideNav_AccountSwitcher_Button"]') &&
+      document.querySelector('[data-testid="AppTabBar_Home_Link"]')
     )
   );
   const loginRequired = Boolean(

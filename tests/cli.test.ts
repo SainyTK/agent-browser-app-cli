@@ -11,10 +11,7 @@ import { join, resolve } from "node:path";
 import { listNotebooksScript } from "../src/apps/gnb/browser-scripts.ts";
 
 const cli = resolve(import.meta.dir, "../src/cli.ts");
-const fakeBrowser = resolve(
-  import.meta.dir,
-  "fixtures/fake-agent-browser.ts",
-);
+const browserPreload = resolve(import.meta.dir, "fixtures/browser-preload.ts");
 const fakeSystemBrowser = resolve(
   import.meta.dir,
   "fixtures/fake-system-browser.ts",
@@ -27,12 +24,13 @@ async function runCli(
   environment: NodeJS.ProcessEnv = {},
   command = ["bun", cli],
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
-  const processHandle = Bun.spawn([...command, ...args], {
+  // Preload for both the CLI entry point and executable aliases.
+  const entryPoint = command[0] === "bun" ? command.slice(1) : command;
+  const processHandle = Bun.spawn([process.execPath, "--preload", browserPreload, ...entryPoint, ...args], {
     stdout: "pipe",
     stderr: "pipe",
     env: {
       ...process.env,
-      AGENT_BROWSER_BIN: fakeBrowser,
       AGENT_BROWSER_HOME: home,
       FAKE_AGENT_BROWSER_STATE: join(home, "fake-runtime.json"),
       FAKE_AGENT_BROWSER_LOG: join(home, "fake-invocations.jsonl"),
@@ -60,7 +58,10 @@ afterEach(async () => {
   );
 });
 
-describe("agent-browser-app CLI", () => {
+// Browser command logs below assert the legacy test adapter's arguments.
+// They do not assert Playwright launch options or exercise the real engine.
+// Real browser behavior belongs in tests/browser.test.ts.
+describe("agent-browser-app CLI with legacy test adapter", () => {
   test("lists Gemini Notebook entries without invoking application event handlers", () => {
     expect(listNotebooksScript).not.toContain("__zone_symbol__clickfalse");
     expect(listNotebooksScript).not.toContain("history.pushState");
@@ -134,6 +135,60 @@ describe("agent-browser-app CLI", () => {
       aba: "./src/cli.ts",
     });
   });
+
+  test("runs raw code for every application and alias with selected profiles", async () => {
+    const home = await createHome();
+    for (const app of ["gnb", "x", "reddit"]) {
+      const login = await runCli([app, "auth", "login", "--timeout", "2", ...(app === "reddit" ? ["--playwright"] : [])], home);
+      expect(login.exitCode).toBe(0);
+    }
+    for (const app of ["gnb", "gemini-notebook", "notebooklm", "x", "twitter", "reddit"]) {
+      const result = await runCli([app, "raw", 'console.log("script diagnostic"); return { url: page.url(), tabs: context.pages().length };', "--json", "--headless"], home);
+      expect(result.exitCode).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual({ result: { url: app === "reddit" ? "https://www.reddit.com/" : ["x", "twitter"].includes(app) ? "https://x.com/home" : "https://notebooklm.google.com/", tabs: 1 } });
+      expect(result.stderr).toContain("script diagnostic");
+    }
+    const script = join(home, "raw.js");
+    await writeFile(script, "return page.url();");
+    const fromFile = await runCli(["x", "raw", "--file", script, "--url", "https://x.com/settings", "--headed"], home);
+    expect(fromFile.exitCode).toBe(0);
+    expect(fromFile.stdout.trim()).toBe("https://x.com/settings");
+    const noResult = await runCli(["x", "raw", "await Promise.resolve();", "--json"], home);
+    expect(JSON.parse(noResult.stdout)).toEqual({ result: null });
+    const failed = await runCli(["x", "raw", 'throw new Error("private-error-marker");', "--json"], home);
+    expect(failed.exitCode).toBe(1);
+    expect(failed.stdout).toBe("");
+    expect(failed.stderr).toContain("Raw Playwright code failed");
+    expect(failed.stderr).not.toContain("private-error-marker");
+    const invalidResult = await runCli(["x", "raw", "return 1n;", "--json"], home);
+    expect(invalidResult.exitCode).toBe(1);
+    expect(invalidResult.stderr).toContain("not JSON-serializable");
+  }, 30_000);
+
+  test("validates raw arguments before opening a browser", async () => {
+    const home = await createHome();
+    for (const args of [
+      [], ["return 1;", "extra"], ["return 1;", "--file", "script.js"],
+      ["--file", "missing.js"], [""], ["return (;"],
+      ["return 1;", "--timeout", "0"], ["return 1;", "--timeout", "Infinity"],
+      ["return 1;", "--timeout="], ["return 1;", "--json=false"],
+      ["return 1;", "--timeout", "3000000"], ["return 1;", "--headed", "--headless"],
+      ["return 1;", "--url", "file:///tmp/test"], ["return 1;", "--unknown", "value"],
+      ["return 1;", "--file", "one.js", "--file", "two.js"],
+    ]) {
+      const result = await runCli(["x", "raw", ...args], home);
+      expect(result.exitCode).toBe(2);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain("Error:");
+    }
+    const noAccount = await runCli(["x", "raw", "return page.url();"], home);
+    expect(noAccount.exitCode).toBe(1);
+    expect(noAccount.stderr).toContain("x auth login");
+    const help = await runCli(["reddit", "raw", "--help"], home);
+    expect(help.exitCode).toBe(0);
+    expect(help.stdout).toContain("raw [<code> | --file <script.js>]");
+    expect(help.stdout).toContain("not sandboxed");
+  }, 15_000);
 
   test("runs the authenticated X command flow", async () => {
     const home = await createHome();
@@ -296,7 +351,7 @@ describe("agent-browser-app CLI", () => {
         "reddit",
         "auth",
         "login",
-        "--agent-browser",
+        "--playwright",
         "--timeout",
         "2",
       ],
@@ -306,6 +361,7 @@ describe("agent-browser-app CLI", () => {
     expect(loginResult.stdout).toContain(
       "Authentication saved for u/fixture_redditor.",
     );
+    expect(loginResult.stderr).not.toContain("deprecated");
 
     const accountsResult = await runCli(
       ["reddit", "auth", "list", "--json"],
@@ -356,6 +412,12 @@ describe("agent-browser-app CLI", () => {
     );
     expect(headlessFeedResult.exitCode).toBe(0);
 
+    const headedFeedResult = await runCli(
+      ["reddit", "feed", "--limit", "1", "--headed", "--json"],
+      home,
+    );
+    expect(headedFeedResult.exitCode).toBe(0);
+
     const profileResult = await runCli(
       [
         "reddit",
@@ -378,6 +440,12 @@ describe("agent-browser-app CLI", () => {
     expect(profileTextResult.exitCode).toBe(0);
     expect(profileTextResult.stdout).toContain("spez (u/spez)");
     expect(profileTextResult.stdout).toContain("Karma: 123456");
+
+    const headedProfileResult = await runCli(
+      ["reddit", "profile", "u/spez", "--headed", "--json"],
+      home,
+    );
+    expect(headedProfileResult.exitCode).toBe(0);
 
     const xAccounts = await runCli(
       ["x", "auth", "list", "--json"],
@@ -423,17 +491,40 @@ describe("agent-browser-app CLI", () => {
       }),
     ).toBe(true);
     const redditPageInvocations = invocations.filter((candidate) =>
-      candidate.includes("https://www.reddit.com/") ||
-      candidate.includes("https://www.reddit.com/user/spez/")
+      !candidate.some((argument) => argument.startsWith("agent-browser-app-reddit-login-")) &&
+      (candidate.includes("https://www.reddit.com/") ||
+        candidate.includes("https://www.reddit.com/user/spez/"))
     );
-    expect(redditPageInvocations.some((invocation) => {
+    expect(redditPageInvocations.filter((invocation) => {
       const headedIndex = invocation.indexOf("--headed");
       return headedIndex >= 0 && invocation[headedIndex + 1] === "true";
-    })).toBe(true);
-    expect(redditPageInvocations.some((invocation) => {
+    })).toHaveLength(6);
+    expect(redditPageInvocations.filter((invocation) => {
       const headedIndex = invocation.indexOf("--headed");
       return headedIndex >= 0 && invocation[headedIndex + 1] === "false";
-    })).toBe(true);
+    })).toHaveLength(1);
+
+    await writeFile(
+      join(home, "apps/agent-browser-app/reddit/config.json"),
+      JSON.stringify({ headed: false }),
+    );
+    for (const args of [
+      ["reddit", "feed", "--limit", "1", "--json"],
+      ["reddit", "profile", "u/spez", "--json"],
+      ["reddit", "feed", "--limit", "1", "--headed", "--json"],
+    ]) {
+      expect((await runCli(args, home)).exitCode).toBe(0);
+    }
+    const configuredOpens = (await readFile(join(home, "fake-invocations.jsonl"), "utf8"))
+      .trim().split("\n").map((line) => JSON.parse(line) as string[])
+      .filter((invocation) =>
+        invocation.includes("https://www.reddit.com/") ||
+        invocation.includes("https://www.reddit.com/user/spez/"),
+      )
+      .slice(-3);
+    expect(configuredOpens.map((invocation) =>
+      invocation[invocation.indexOf("--headed") + 1],
+    )).toEqual(["false", "false", "true"]);
   }, 20_000);
 
   test("validates Reddit command arguments and options", async () => {
@@ -479,14 +570,14 @@ describe("agent-browser-app CLI", () => {
         "reddit",
         "auth",
         "login",
-        "--agent-browser",
+        "--playwright",
         "--system-browser",
       ],
       home,
     );
     expect(conflictingLoginBrowsers.exitCode).toBe(2);
     expect(conflictingLoginBrowsers.stderr).toContain(
-      "only one of --agent-browser or --system-browser",
+      "only one of --playwright or --system-browser",
     );
 
     const conflictingFeedBrowsers = await runCli(
@@ -497,6 +588,28 @@ describe("agent-browser-app CLI", () => {
     expect(conflictingFeedBrowsers.stderr).toContain(
       "only one of --headed or --headless",
     );
+  });
+
+  test("accepts the explicit deprecated Reddit browser alias and warns", async () => {
+    const home = await createHome();
+    const login = await runCli(
+      ["reddit", "auth", "login", "--agent-browser", "--timeout", "2"],
+      home,
+    );
+    expect(login.exitCode).toBe(0);
+    expect(login.stderr).toContain("Warning: --agent-browser is deprecated. Use --playwright.");
+    expect(login.stdout).toContain("Authentication saved for u/fixture_redditor.");
+    const accounts = await runCli(["reddit", "auth", "list", "--json"], home);
+    expect(accounts.exitCode).toBe(0);
+    expect(JSON.parse(accounts.stdout).accounts[0].identity).toBe("fixture_redditor");
+
+    const conflict = await runCli(
+      ["reddit", "auth", "login", "--agent-browser", "--system-browser"],
+      home,
+    );
+    expect(conflict.exitCode).toBe(2);
+    expect(conflict.stderr).toContain("only one of --playwright or --system-browser");
+    expect(conflict.stderr).toContain("--agent-browser is a deprecated alias for --playwright");
   });
 
   test("defaults Reddit login to an isolated system browser", async () => {
@@ -646,6 +759,25 @@ describe("agent-browser-app CLI", () => {
         );
       }),
     ).toBe(true);
+  });
+
+  test("detects a signed-in X tab away from home while a login popup remains open", async () => {
+    const home = await createHome();
+    const result = await runCli(["x", "auth", "login", "--system-browser", "--timeout", "2"], home, {
+      AGENT_BROWSER_APP_SYSTEM_BROWSER_BIN: fakeSystemBrowser,
+      FAKE_SYSTEM_BROWSER_LOG: join(home, "fake-system-browser.jsonl"),
+      FAKE_SYSTEM_BROWSER_DONE: join(home, "fake-system-browser.done"),
+      FAKE_X_LOGIN_OVERLAY: "true",
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(result.stdout).toContain("Authentication saved for @fixture_user.");
+    const invocations = (await readFile(join(home, "fake-invocations.jsonl"), "utf8")).trim().split("\n").map((line) => JSON.parse(line) as string[]);
+    const switches = invocations.filter((args) => args.includes("tab") && !args.includes("list")).map((args) => args[args.indexOf("tab") + 1]);
+    expect(switches).toEqual(["t-login", "t-account"]);
+    const registry = JSON.parse(await readFile(join(home, "apps/agent-browser-app/x/accounts.json"), "utf8"));
+    expect(registry.accounts[0].credentialStore).toBe("native");
+    const saves = invocations.filter((args) => args.includes("state") && args.includes("save"));
+    expect(saves).toHaveLength(1);
   });
 
   test("bootstraps Gemini Notebook login in an isolated system browser", async () => {
@@ -921,6 +1053,24 @@ describe("agent-browser-app CLI", () => {
       await readFile(join(home, "fake-runtime.json"), "utf8"),
     ) as { selectedSourceIndexes: number[] };
     expect(runtime.selectedSourceIndexes).toEqual([1]);
+  }, 20_000);
+
+  test("waits for chat history hydration before filling a question", async () => {
+    const home = await createHome();
+    expect((await runCli(["gnb", "auth", "login", "--timeout", "2"], home)).exitCode).toBe(0);
+    const result = await runCli(["gnb", "ask", "question", "--id", "abc-123", "--timeout", "8", "--json"], home, {
+      FAKE_CHAT_LOADING_POLLS: "6",
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const invocations = (await readFile(join(home, "fake-invocations.jsonl"), "utf8")).trim().split("\n").map((line) => JSON.parse(line) as string[]);
+    const fillIndex = invocations.findIndex((args) => args.includes("fill"));
+    const beforeFill = invocations.slice(0, fillIndex);
+    const polls = beforeFill.filter((args) => {
+      const encodedIndex = args.indexOf("-b");
+      return encodedIndex >= 0 && Buffer.from(args[encodedIndex + 1]!, "base64").toString("utf8").includes("aba:chat-state");
+    });
+    expect(polls.length).toBeGreaterThan(6);
+    expect(JSON.parse(result.stdout).answer).toBe("Fixture answer");
   }, 20_000);
 
   test("reports a useful error before login", async () => {
@@ -1202,11 +1352,12 @@ describe("agent-browser-app CLI", () => {
     expect(invalidUrl.stderr).toContain("Invalid source URL");
   }, 35_000);
 
-  test("keeps a Drive URL result selected before inserting it", async () => {
+  test("waits for picker hydration and keeps a Drive URL result selected before inserting it", async () => {
     const home = await createHome();
     const driveUrl =
       "https://drive.google.com/file/d/fixture-drive-id/view?usp=sharing";
     let selectScriptCalls = 0;
+    let pickerStateReads = 0;
     let sourceInserted = false;
     const server = Bun.serve({
       port: 0,
@@ -1260,10 +1411,11 @@ describe("agent-browser-app CLI", () => {
             const expression = message.params.expression as string;
             let value: unknown = true;
             if (expression.includes("aba:drive-picker-state")) {
+              pickerStateReads += 1;
               value = {
                 ready: true,
                 searchValue: driveUrl,
-                searching: false,
+                searching: pickerStateReads <= 6,
                 optionCount: 1,
                 exactMatchCount: 0,
               };
@@ -1320,6 +1472,10 @@ describe("agent-browser-app CLI", () => {
       expect(result.exitCode).toBe(0);
       expect(selectScriptCalls).toBe(0);
       expect(sourceInserted).toBe(true);
+      const invocations = (await readFile(join(home, "fake-invocations.jsonl"), "utf8")).trim().split("\n").map((line) => JSON.parse(line) as string[]);
+      const frameFillIndex = invocations.findIndex((args) => args.includes("frame"));
+      const initialPickerReads = invocations.slice(0, frameFillIndex).filter((args) => args[0] === "frame-eval" && Buffer.from(args[2]!, "base64").toString("utf8").includes("aba:drive-picker-state"));
+      expect(initialPickerReads.length).toBeGreaterThan(6);
       expect(
         JSON.parse(result.stdout).sources.map(
           (source: { title: string }) => source.title,

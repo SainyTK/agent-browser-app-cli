@@ -266,7 +266,7 @@ export const markConfirmNotebookRemovalScript = String.raw`
   const dialogs = Array.from(
     document.querySelectorAll('[role="dialog"], mat-dialog-container')
   ).filter((dialog) =>
-    /delete notebook everywhere|permanently deleted from all locations/i.test(
+    /delete (?:this )?notebook(?: everywhere)?|permanently deleted (?:from|across) all locations/i.test(
       dialog.textContent || ""
     )
   );
@@ -749,7 +749,15 @@ export const readChatStateScript = String.raw`
     );
     return { question, answer, complete };
   }).filter((pair) => pair.question || pair.answer);
-  return { pairs };
+  const loading = Array.from(
+    document.querySelectorAll('[role="progressbar"], mat-progress-spinner')
+  ).some((element) => {
+    const rect = element.getBoundingClientRect();
+    const style = getComputedStyle(element);
+    return rect.width > 0 && rect.height > 0 &&
+      style.visibility !== "hidden" && style.display !== "none";
+  });
+  return { pairs, loading };
 })()
 `;
 

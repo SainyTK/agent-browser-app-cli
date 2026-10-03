@@ -5,6 +5,8 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { CliError } from "../errors.ts";
 import type { Account } from "../registry.ts";
+import { chromium } from "playwright";
+import { connectLocalChromeTransport } from "../browser/transport.ts";
 
 export interface SystemBrowserApp {
   name: string;
@@ -228,7 +230,29 @@ export async function startSystemBrowser(
     cdpPort,
     close: async () => {
       if (processHandle.exitCode === null) {
-        processHandle.kill();
+        // Ask the Chrome process we launched to exit cleanly so its profile is reusable.
+        // Closing a CDP-connected Playwright Browser alone only disconnects.
+        try {
+          const transport = await connectLocalChromeTransport(cdpPort);
+          try {
+            const browser = await chromium.connectOverCDP(transport, { timeout: 5_000 });
+            try {
+              const session = await browser.newBrowserCDPSession();
+              await session.send("Browser.close").catch(() => undefined);
+            } finally {
+              await browser.close().catch(() => undefined);
+            }
+          } finally {
+            transport.close();
+          }
+        } catch {
+          // If Chrome no longer exposes CDP, terminate only the process we started.
+        }
+        const exited = await Promise.race([
+          processHandle.exited.then(() => true),
+          new Promise<false>((resolve) => setTimeout(() => resolve(false), 2_000)),
+        ]);
+        if (!exited && processHandle.exitCode === null) processHandle.kill();
       }
       await processHandle.exited;
       await Promise.all([stdoutPromise, stderrPromise]);

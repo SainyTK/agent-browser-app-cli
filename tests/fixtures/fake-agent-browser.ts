@@ -29,6 +29,7 @@ interface FakeState {
     url: string;
   }>;
   pendingNotebookId?: string;
+  activeTab?: string;
   sources: string[];
   selectedSourceIndexes: number[];
   pendingSourceIndex?: number;
@@ -107,6 +108,7 @@ function output(data: unknown): void {
 function commandIndex(): number {
   const commands = new Set([
     "open",
+    "frame",
     "get",
     "eval",
     "click",
@@ -131,8 +133,12 @@ if (command === "tab" && (!rest[0] || rest[0] === "list")) {
   const geminiNotebook =
     args.includes("--cdp") &&
     args.some((argument) => argument.startsWith("agent-browser-app-gnb-"));
+  const xOverlay = !reddit && !geminiNotebook && process.env.FAKE_X_LOGIN_OVERLAY === "true";
   output({
-    tabs: [
+    tabs: xOverlay ? [
+      { active: false, label: null, tabId: "t-login", title: "Sign in / X", type: "page", url: "https://x.com/i/flow/login" },
+      { active: true, label: null, tabId: "t-account", title: "X", type: "page", url: "https://x.com/fixture_user" },
+    ] : [
       {
         active: true,
         label: null,
@@ -148,6 +154,8 @@ if (command === "tab" && (!rest[0] || rest[0] === "list")) {
     ],
   });
 } else if (command === "tab") {
+  state.activeTab = rest[0];
+  await saveState(state);
   output({ active: rest[0] });
 } else if (command === "open") {
   state.url = rest[0] || "https://notebooklm.google.com/";
@@ -172,13 +180,14 @@ if (command === "tab" && (!rest[0] || rest[0] === "list")) {
   const encoded = rest[rest.indexOf("-b") + 1];
   const script = Buffer.from(encoded, "base64").toString("utf8");
   if (script.includes("aba:x-auth-state")) {
+    const loginPopup = process.env.FAKE_X_LOGIN_OVERLAY === "true" && state.activeTab === "t-login";
     output({
       result: {
-        authenticated: true,
-        loginRequired: false,
+        authenticated: !loginPopup,
+        loginRequired: loginPopup,
         googleRejected: false,
-        username: "fixture_user",
-        url: "https://x.com/home",
+        username: loginPopup ? null : "fixture_user",
+        url: loginPopup ? "https://x.com/i/flow/login" : "https://x.com/fixture_user",
       },
     });
   } else if (script.includes("aba:reddit-auth-state")) {
@@ -429,6 +438,7 @@ if (command === "tab" && (!rest[0] || rest[0] === "list")) {
     output({
       result: {
         pairs,
+        loading: !state.submitted && state.responsePolls <= Number(process.env.FAKE_CHAT_LOADING_POLLS || 0),
       },
     });
   } else if (script.includes("aba:source-selection")) {
@@ -583,6 +593,8 @@ if (command === "tab" && (!rest[0] || rest[0] === "list")) {
   output({ path: destination });
 } else if (command === "state" && rest[0] === "load") {
   output({ loaded: true, path: rest[1] });
+} else if (command === "frame") {
+  output({ ready: true });
 } else if (command === "close") {
   console.log("Browser closed");
 } else {

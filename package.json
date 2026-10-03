@@ -1,7 +1,7 @@
 {
   "name": "agent-browser-app",
   "version": "0.3.2",
-  "description": "Reliable authenticated application workflows powered by agent-browser",
+  "description": "Reliable authenticated application workflows powered by Playwright",
   "type": "module",
   "bin": {
     "agent-browser-app": "./src/cli.ts",
@@ -18,5 +18,8 @@
   },
   "engines": {
     "bun": ">=1.3.0"
+  },
+  "dependencies": {
+    "playwright": "1.63.0"
   }
 }

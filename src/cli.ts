@@ -1,9 +1,11 @@
 #!/usr/bin/env bun
 
 import packageMetadata from "../package.json";
-import { getAppPaths } from "./config.ts";
+import { readFile } from "node:fs/promises";
+import { compileRaw, runRaw } from "./raw.ts";
+import { getAppPaths, NOTEBOOK_HOME_URL, resolveAppHeaded, type AppId } from "./config.ts";
 import { CliError } from "./errors.ts";
-import { AccountRegistry } from "./registry.ts";
+import { AccountRegistry, getProfileCredentialStore } from "./registry.ts";
 import {
   addDriveSource,
   addTextSource,
@@ -20,6 +22,7 @@ import {
   uploadNotebookFiles,
 } from "./apps/gnb/service.ts";
 import {
+  X_HOME_URL,
   login as loginX,
   loginWithSystemBrowser as loginXWithSystemBrowser,
   readFeed,
@@ -27,6 +30,7 @@ import {
   resolveProfileUrl,
 } from "./apps/x/service.ts";
 import {
+  REDDIT_HOME_URL,
   login as loginReddit,
   loginWithSystemBrowser as loginRedditWithSystemBrowser,
   readFeed as readRedditFeed,
@@ -70,6 +74,7 @@ function parseOptions(args: string[]): ParsedOptions {
   const positionals: string[] = [];
   const booleanOptions = new Set([
     "agent-browser",
+    "playwright",
     "headless",
     "json",
     "headed",
@@ -167,6 +172,13 @@ function assertAllowedOptions(
   }
 }
 
+function appHeaded(appId: AppId, options: ParsedOptions): Promise<boolean> {
+  return resolveAppHeaded(appId, {
+    headed: hasFlag(options, "headed"),
+    headless: hasFlag(options, "headless"),
+  });
+}
+
 function printJson(value: unknown): void {
   console.log(JSON.stringify(value, null, 2));
 }
@@ -175,6 +187,7 @@ function usage(): string {
   return `agent-browser-app ${VERSION}
 
 Usage:
+  agent-browser-app <gnb|x|reddit> raw [<code> | --file <script.js>] [--account <id>] [--url <url>] [--timeout <seconds>] [--headed | --headless] [--json]
   agent-browser-app gnb auth login [--account <email>] [--timeout <seconds>] [--system-browser]
   agent-browser-app gnb auth list [--json]
   agent-browser-app gnb auth switch <email-or-id>
@@ -192,12 +205,24 @@ Usage:
   agent-browser-app gnb notebook source remove <source-id...> --id <id-or-url> [--account <email-or-id>] [--headed] [--json]
   agent-browser-app x auth login [--account <handle>] [--timeout <seconds>] [--system-browser]
   agent-browser-app x auth list [--json]
-  agent-browser-app x feed [--limit <count>] [--account <handle-or-id>] [--headed] [--json]
-  agent-browser-app x profile <url-or-id> [--account <handle-or-id>] [--headed] [--json]
-  agent-browser-app reddit auth login [--timeout <seconds>] [--agent-browser]
+  agent-browser-app x feed [--limit <count>] [--account <handle-or-id>] [--headed | --headless] [--json]
+  agent-browser-app x profile <url-or-id> [--account <handle-or-id>] [--headed | --headless] [--json]
+  agent-browser-app reddit auth login [--timeout <seconds>] [--playwright]
   agent-browser-app reddit auth list [--json]
-  agent-browser-app reddit feed [--limit <count>] [--account <username-or-id>] [--headless] [--json]
-  agent-browser-app reddit profile <url-or-username> [--account <username-or-id>] [--headless] [--json]
+  agent-browser-app reddit feed [--limit <count>] [--account <username-or-id>] [--headed | --headless] [--json]
+  agent-browser-app reddit profile <url-or-username> [--account <username-or-id>] [--headed | --headless] [--json]
+
+Raw Playwright:
+  Run trusted JavaScript with page and context in the selected account's profile.
+  Use await for actions and return for output. Scripts are not sandboxed.
+  --file reads an async function body, not a module. Script console output goes to stderr.
+  --url overrides the app home page. --timeout defaults to 60 seconds for async script execution.
+
+Browser configuration:
+  App config: $AGENT_BROWSER_HOME/apps/agent-browser-app/<gnb|x|reddit>/config.json
+  Setting: {"headed": true|false}; defaults: Reddit headed, X and NotebookLM headless.
+  All application commands accept --headed or --headless to override config.
+  Login remains visible.
 
 Executable aliases:
   agent-browser-app, aba
@@ -206,6 +231,62 @@ Application aliases:
   Gemini Notebook: gnb, gemini-notebook, notebooklm
   X: x, twitter
   Reddit: reddit`;
+}
+
+async function handleRaw(
+  registry: AccountRegistry,
+  appId: AppId,
+  homeUrl: string,
+  args: string[],
+): Promise<void> {
+  const options = parseOptions(args);
+  assertAllowedOptions(options, new Set(["account", "file", "url", "timeout", "headed", "headless", "json"]));
+  for (const name of ["account", "file", "url", "timeout"]) {
+    if (stringOptions(options, name).length > 1) {
+      throw new CliError(`Option --${name} may only be supplied once.`, 2);
+    }
+    if (options.values.has(name) && !stringOption(options, name)?.trim()) {
+      throw new CliError(`Option --${name} requires a non-empty value.`, 2);
+    }
+  }
+  for (const name of ["headed", "headless", "json"]) {
+    if (options.values.has(name) && !hasFlag(options, name)) {
+      throw new CliError(`Option --${name} does not accept a value.`, 2);
+    }
+  }
+  const file = stringOption(options, "file");
+  if (options.positionals.length > 1 || (file !== undefined ? options.positionals.length !== 0 : options.positionals.length !== 1)) {
+    throw new CliError("raw requires exactly one quoted code argument or --file <script.js>.", 2);
+  }
+  const timeoutSeconds = numberOption(options, "timeout", 60);
+  if (timeoutSeconds * 1000 > 2_147_483_647) {
+    throw new CliError("Option --timeout is too large.", 2);
+  }
+  const headed = await appHeaded(appId, options);
+  const url = stringOption(options, "url") ?? homeUrl;
+  try {
+    if (!["http:", "https:"].includes(new URL(url).protocol)) throw new Error();
+  } catch {
+    throw new CliError("Option --url must be an absolute HTTP or HTTPS URL.", 2);
+  }
+  let source = options.positionals[0] ?? "";
+  if (file !== undefined) {
+    try {
+      source = await readFile(file, "utf8");
+    } catch {
+      throw new CliError("Could not read the raw script file.", 2);
+    }
+  }
+  const operation = compileRaw(source);
+  const account = await registry.resolve(stringOption(options, "account"));
+  const result = await runRaw(account, appId, url, operation, headed, timeoutSeconds * 1000);
+  try {
+    if (hasFlag(options, "json")) printJson({ result: result ?? null });
+    else if (typeof result === "string") console.log(result);
+    else if (result !== undefined) printJson(result);
+  } catch {
+    throw new CliError("Raw result is not JSON-serializable. Return a plain JSON value.");
+  }
 }
 
 async function handleGnbAuth(
@@ -241,7 +322,11 @@ async function handleGnbAuth(
           );
         });
     const saved = await registry.saveAuthenticated(
-      { ...account, useSystemBrowser: systemBrowser || undefined },
+      {
+        ...account,
+        useSystemBrowser: systemBrowser || undefined,
+        credentialStore: systemBrowser ? "native" : getProfileCredentialStore(account),
+      },
       detectedEmail,
     );
     console.log(`Authentication saved for ${saved.email || saved.id}.`);
@@ -321,7 +406,7 @@ async function handleXAuth(
     const detectedUsername = systemBrowser
       ? await loginXWithSystemBrowser(account, timeoutSeconds, () => {
           console.log(
-            "Complete X sign-in in the isolated Chrome window and wait for the X home feed. This command will capture the login and close the isolated browser automatically.",
+            "Complete X sign-in in the isolated Chrome window. The command detects authenticated account navigation even if a sign-in popup remains open. This command will capture the login and close the isolated browser automatically.",
           );
         })
       : await loginX(account, timeoutSeconds, () => {
@@ -330,7 +415,7 @@ async function handleXAuth(
           );
         });
     const saved = await registry.saveAuthenticated(
-      account,
+      { ...account, credentialStore: systemBrowser ? "native" : getProfileCredentialStore(account) },
       detectedUsername,
     );
     console.log(
@@ -401,14 +486,14 @@ async function handleXFeed(
   const options = parseOptions(args);
   assertAllowedOptions(
     options,
-    new Set(["account", "headed", "json", "limit"]),
+    new Set(["account", "headed", "headless", "json", "limit"]),
   );
   if (options.positionals.length > 0) {
     throw new CliError("x feed does not accept positional arguments.", 2);
   }
   const limit = positiveIntegerOption(options, "limit", 20);
   const account = await registry.resolve(stringOption(options, "account"));
-  const tweets = await readFeed(account, limit, hasFlag(options, "headed"));
+  const tweets = await readFeed(account, limit, await appHeaded("x", options));
   if (hasFlag(options, "json")) {
     printJson({
       account: account.identity
@@ -435,7 +520,7 @@ async function handleXProfile(
   args: string[],
 ): Promise<void> {
   const options = parseOptions(args);
-  assertAllowedOptions(options, new Set(["account", "headed", "json"]));
+  assertAllowedOptions(options, new Set(["account", "headed", "headless", "json"]));
   const target = options.positionals[0];
   if (!target) {
     throw new CliError(
@@ -454,7 +539,7 @@ async function handleXProfile(
   const profile = await readProfile(
     account,
     target,
-    hasFlag(options, "headed"),
+    await appHeaded("x", options),
   );
   if (hasFlag(options, "json")) {
     printJson(profile);
@@ -500,7 +585,7 @@ async function handleRedditAuth(
   if (command === "login") {
     assertAllowedOptions(
       options,
-      new Set(["agent-browser", "system-browser", "timeout"]),
+      new Set(["agent-browser", "playwright", "system-browser", "timeout"]),
     );
     if (options.positionals.length > 0) {
       throw new CliError(
@@ -509,17 +594,20 @@ async function handleRedditAuth(
       );
     }
     if (
-      hasFlag(options, "agent-browser") &&
+      (hasFlag(options, "agent-browser") || hasFlag(options, "playwright")) &&
       hasFlag(options, "system-browser")
     ) {
       throw new CliError(
-        "Reddit login accepts only one of --agent-browser or --system-browser.",
+        "Reddit login accepts only one of --playwright or --system-browser. --agent-browser is a deprecated alias for --playwright.",
         2,
       );
     }
     const account = await registry.accountForDiscoveredLogin();
     const timeoutSeconds = numberOption(options, "timeout", 600);
-    const systemBrowser = !hasFlag(options, "agent-browser");
+    if (hasFlag(options, "agent-browser")) {
+      console.error("Warning: --agent-browser is deprecated. Use --playwright.");
+    }
+    const systemBrowser = !(hasFlag(options, "playwright") || hasFlag(options, "agent-browser"));
     console.log(
       `Opening ${
         systemBrowser ? "system Google Chrome" : "headed Chrome"
@@ -541,7 +629,7 @@ async function handleRedditAuth(
           );
         });
     const saved = await registry.saveDiscoveredAuthenticated(
-      account,
+      { ...account, credentialStore: systemBrowser ? "native" : getProfileCredentialStore(account) },
       detectedUsername,
     );
     console.log(
@@ -653,7 +741,7 @@ async function handleRedditFeed(
   const posts = await readRedditFeed(
     account,
     limit,
-    !hasFlag(options, "headless"),
+    await appHeaded("reddit", options),
   );
   if (hasFlag(options, "json")) {
     printJson({
@@ -709,7 +797,7 @@ async function handleRedditProfile(
   const profile = await readRedditProfile(
     account,
     target,
-    !hasFlag(options, "headless"),
+    await appHeaded("reddit", options),
   );
   if (hasFlag(options, "json")) {
     printJson(profile);
@@ -749,7 +837,7 @@ async function handleNotebook(
   const command = args[0];
   const options = parseOptions(args.slice(1));
   const account = await registry.resolve(stringOption(options, "account"));
-  const headed = hasFlag(options, "headed");
+  const headed = await appHeaded("gnb", options);
   const json = hasFlag(options, "json");
 
   if (command === "list") {
@@ -829,7 +917,7 @@ async function handleNotebook(
   if (command === "ask" || command === "query") {
     assertAllowedOptions(
       options,
-      new Set(["account", "headed", "id", "json", "source", "timeout", "url"]),
+      new Set(["account", "headed", "headless", "id", "json", "source", "timeout", "url"]),
     );
     const question = options.positionals[0];
     const target =
@@ -1072,6 +1160,10 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
       },
     );
     const command = args[1];
+    if (command === "raw") {
+      await handleRaw(registry, "reddit", REDDIT_HOME_URL, args.slice(2));
+      return;
+    }
     if (command === "auth") {
       await handleRedditAuth(registry, args.slice(2));
       return;
@@ -1100,6 +1192,10 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
       },
     );
     const command = args[1];
+    if (command === "raw") {
+      await handleRaw(registry, "x", X_HOME_URL, args.slice(2));
+      return;
+    }
     if (command === "auth") {
       await handleXAuth(registry, args.slice(2));
       return;
@@ -1117,6 +1213,10 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
 
   const registry = new AccountRegistry(getAppPaths());
   const group = args[1];
+  if (group === "raw") {
+    await handleRaw(registry, "gnb", NOTEBOOK_HOME_URL, args.slice(2));
+    return;
+  }
   if (group === "auth") {
     await handleGnbAuth(registry, args.slice(2));
     return;

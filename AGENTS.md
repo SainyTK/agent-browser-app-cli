@@ -2,8 +2,21 @@
 
 ## Product direction
 
-This repository wraps agent-browser with stable commands for authenticated web applications.
-Keep authentication profiles and storage-state files compatible with agent-browser.
+This repository provides stable commands for authenticated web applications through Playwright under Bun.
+Keep the runtime dependency pinned to exactly `playwright@1.63.0`.
+The agent-browser executable is not required.
+Keep existing `AGENT_BROWSER_HOME` account paths, authentication profiles, and storage-state files compatible with agent-browser.
+Use an isolated system Chrome persistent context by default.
+Treat a populated profile as authoritative and import `state.json` only into a fresh profile before navigation.
+Retain native system Chrome login and Playwright CDP attachment through Bun's native WebSocket transport.
+Record the profile credential store when saving native authentication.
+Do not apply Playwright mock-keychain or basic-password-store overrides to native Chrome profiles.
+Preserve legacy credential-store defaults for unmarked profiles.
+Detect X authentication from account navigation across X tabs, not an exact `/home` URL.
+Reddit `--playwright` selects automated login; `--agent-browser` is its deprecated alias.
+Support `AGENT_BROWSER_APP_BROWSER_BIN` for the Playwright executable override.
+Optional managed Chromium requires `bunx playwright install chromium` and `AGENT_BROWSER_APP_BROWSER_CHANNEL=chromium`.
+The native login executable override remains `AGENT_BROWSER_APP_SYSTEM_BROWSER_BIN`.
 Do not replace browser-driven application behavior with private or reverse-engineered APIs.
 
 Gemini Notebook is the first adapter.
@@ -97,9 +110,16 @@ Run the full repository checks on the merged development branch.
 Integrate parallel feature branches one at a time, and require every remaining feature branch to repeat the final synchronization against the newly advanced development branch.
 Return the Treehouse worktree only after its feature is safely integrated or intentionally retained on a named branch.
 
-Start bug fixes by reproducing the user-facing command with the real agent-browser CLI.
-Use fake-process tests only after the real failure mode is understood.
+Start bug fixes by reproducing the user-facing command with the real CLI from the feature worktree.
+Use a worktree-specific `AGENT_BROWSER_HOME`, and access live credentials only with explicit authorization.
+Use browser-session mocks only after the real failure mode is understood.
+CLI tests should run under Bun with a preload that mocks the browser-session boundary, not a fake agent-browser executable.
+Keep `tests/browser.test.ts` as real Chrome coverage with local pages and temporary profiles for frames, file uploads, and authentication-state behavior.
 Validate command help, error output, exit codes, and JSON output.
+Verify Playwright packaging in compiled releases separately from source tests.
+Do not infer live workflow coverage from mocked CLI or local browser tests.
+Record live verification commands, results, and any blocked workflows in a verification document.
+Do not claim that all live authentication or application workflows have passed unless each has been verified.
 
 Run these checks before handing off a change:
 

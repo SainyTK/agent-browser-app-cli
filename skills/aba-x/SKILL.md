@@ -8,6 +8,13 @@ description: Use the authenticated agent-browser-app CLI to interact with X or T
 Use `aba x` for browser-driven X operations.
 Run the requested operation when the user wants an action performed.
 Only explain commands without running them when the user asks for instructions.
+ABA uses Playwright under Bun and does not require an agent-browser executable.
+It opens an isolated persistent system Chrome profile by default.
+Existing `AGENT_BROWSER_HOME` paths remain compatible.
+A populated profile is authoritative; the CLI imports `state.json` only into a fresh profile.
+Do not inspect those files yourself.
+For optional managed Chromium, run `bunx playwright install chromium` and set `AGENT_BROWSER_APP_BROWSER_CHANNEL=chromium`.
+`AGENT_BROWSER_APP_BROWSER_BIN` overrides the Playwright executable.
 
 ## Operating rules
 
@@ -42,7 +49,8 @@ Use a known handle to add or refresh a specific account:
 aba x auth login --account "@username"
 ```
 
-Login opens a visible browser and waits for the authenticated X home feed.
+Login opens a visible browser and detects authenticated X account navigation across its tabs.
+A remaining sign-in popup or a route other than `/home` does not prevent detection.
 Allow the command to continue until it confirms that authentication was saved.
 If Google rejects sign-in from software-controlled Chrome, retry with the isolated system-browser flow:
 
@@ -50,6 +58,9 @@ If Google rejects sign-in from software-controlled Chrome, retry with the isolat
 aba x auth login --account "@username" --system-browser
 ```
 
+Native system Chrome login retains the isolated account profile.
+Playwright attaches over CDP through Bun's native WebSocket transport to capture authentication, then the launcher closes the browser.
+`AGENT_BROWSER_APP_SYSTEM_BROWSER_BIN` overrides the native login executable.
 The most recently authenticated account is active.
 Select a different configured account per read operation with `--account`.
 
@@ -107,6 +118,9 @@ Do not inspect stored authentication data.
 
 Use only commands shown by `aba --help`.
 This adapter currently reads the home feed and profiles.
+Live native X login, feed, and profile checks passed after the Playwright migration.
+See the repository's [verification report](../../docs/playwright-migration-verification.md) for commands, results, and coverage limits.
+Do not describe these workflows as live-verified.
 If the user requests posting, liking, replying, following, direct messaging, search, or another unsupported X action, confirm that it is absent from current help, state the limitation plainly, and offer the closest supported read operation.
 
 ## Active development

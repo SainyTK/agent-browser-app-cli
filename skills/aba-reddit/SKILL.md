@@ -8,6 +8,11 @@ description: Use the authenticated agent-browser-app CLI to interact with Reddit
 Use `aba reddit` for browser-driven Reddit operations.
 Run the requested operation when the user wants an action performed.
 Only explain commands without running them when the user asks for instructions.
+ABA uses Playwright under Bun and does not require an agent-browser executable.
+Reads reopen an isolated persistent system Chrome profile by default.
+Existing `AGENT_BROWSER_HOME` paths remain compatible.
+A populated profile is authoritative; the CLI imports `state.json` only into a fresh profile.
+Do not inspect those files yourself.
 
 ## Operating rules
 
@@ -40,11 +45,18 @@ Reddit login opens an isolated system Chrome profile by default because Reddit m
 The user does not need to provide a username before signing in.
 Allow the command to continue until it detects the authenticated username, saves authentication, and closes the isolated browser.
 
-Use agent-browser login only when system Chrome cannot be launched:
+Use Playwright-controlled login when the user requests it or native system Chrome login is unavailable:
 
 ```bash
-aba reddit auth login --agent-browser
+aba reddit auth login --playwright
 ```
+
+`--agent-browser` is a deprecated alias for `--playwright` and prints a warning.
+Neither option invokes agent-browser.
+System Chrome remains the default Playwright browser.
+For optional managed Chromium, run `bunx playwright install chromium` and set `AGENT_BROWSER_APP_BROWSER_CHANNEL=chromium`.
+`AGENT_BROWSER_APP_BROWSER_BIN` overrides the Playwright executable.
+The native login flow attaches Playwright over CDP through Bun's native WebSocket transport and uses `AGENT_BROWSER_APP_SYSTEM_BROWSER_BIN` for its executable override.
 
 Do not pass `--account` to `reddit auth login`.
 The most recently authenticated account is active.
@@ -104,6 +116,8 @@ The former `--headed` option remains accepted but is unnecessary.
 
 Use only commands shown by `aba --help`.
 This adapter currently reads the authenticated home feed and user profiles.
+Live feed checks passed during the Playwright migration with cloned accounts.
+That does not verify every live login or profile workflow.
 If the user requests subreddit browsing, search, posting, voting, commenting, saving, following, moderation, or another unsupported Reddit action, confirm that it is absent from current help, state the limitation plainly, and offer the closest supported read operation.
 
 ## Active development

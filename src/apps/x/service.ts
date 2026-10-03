@@ -1,5 +1,5 @@
 import { access } from "node:fs/promises";
-import { AgentBrowser } from "../../agent-browser.ts";
+import { createBrowser, type BrowserSession } from "../../browser/index.ts";
 import { CliError } from "../../errors.ts";
 import type { Account } from "../../registry.ts";
 import {
@@ -8,22 +8,17 @@ import {
   readProfileScript,
   scrollFeedScript,
 } from "./browser-scripts.ts";
-import {
-  startSystemBrowser,
-  waitForSystemBrowserLogin,
-  type SystemBrowserApp,
-} from "../system-browser.ts";
+import { startSystemBrowser } from "../system-browser.ts";
 
-const X_HOME_URL = "https://x.com/home";
+export const X_HOME_URL = "https://x.com/home";
 const X_LOGIN_URL = "https://x.com/i/flow/login";
-const X_SYSTEM_BROWSER_APP: SystemBrowserApp = {
-  name: "X",
-  loginUrl: X_LOGIN_URL,
-  isAuthenticatedUrl: (url) =>
-    (url.hostname === "x.com" || url.hostname === "www.x.com") &&
-    url.pathname.replace(/\/+$/, "") === "/home",
-  authenticatedDestination: "the home feed",
-};
+function isXPage(url: string): boolean {
+  try {
+    return ["x.com", "www.x.com"].includes(new URL(url).hostname);
+  } catch {
+    return false;
+  }
+}
 const RESERVED_PROFILE_PATHS = new Set([
   "compose",
   "explore",
@@ -125,10 +120,10 @@ async function requireState(account: Account): Promise<void> {
 
 async function runAuthenticated<T>(
   account: Account,
-  operation: (browser: AgentBrowser) => Promise<T>,
+  operation: (browser: BrowserSession) => Promise<T>,
 ): Promise<T> {
   await requireState(account);
-  const browser = new AgentBrowser(account, "x");
+  const browser = createBrowser(account, "x");
   try {
     return await operation(browser);
   } finally {
@@ -151,7 +146,7 @@ export async function login(
     startUrl?: string;
   } = {},
 ): Promise<string | undefined> {
-  const browser = new AgentBrowser(account, "x");
+  const browser = createBrowser(account, "x");
   try {
     await browser.open(
       options.startUrl || X_LOGIN_URL,
@@ -187,47 +182,44 @@ export async function loginWithSystemBrowser(
   timeoutSeconds: number,
   onWaiting: () => void,
 ): Promise<string | undefined> {
-  await new AgentBrowser(account, "x").close();
+  const deadline = Date.now() + timeoutSeconds * 1000;
   const systemBrowser = await startSystemBrowser(
     account,
-    X_SYSTEM_BROWSER_APP.loginUrl,
+    X_LOGIN_URL,
     process.env,
     onWaiting,
   );
-  const browser = new AgentBrowser(account, "x");
+  const browser = createBrowser(account, "x");
   try {
-    await waitForSystemBrowserLogin(
-      systemBrowser,
-      timeoutSeconds,
-      X_SYSTEM_BROWSER_APP,
-    );
     await browser.attach(systemBrowser.cdpPort);
-    const homeTab = (await browser.listTabs()).find((tab) => {
+    while (Date.now() < deadline) {
       try {
-        const url = new URL(tab.url);
-        return (
-          tab.type === "page" &&
-          (url.hostname === "x.com" || url.hostname === "www.x.com") &&
-          url.pathname.replace(/\/+$/, "") === "/home"
-        );
-      } catch {
-        return false;
+        const tabs = await browser.listTabs();
+        for (const tab of tabs) {
+          if (tab.type !== "page" || !isXPage(tab.url)) continue;
+          await browser.switchTab(tab.tabId);
+          const state = await browser.eval<AuthState>(readAuthStateScript);
+          // A logged-in page can retain a sign-in dialog or remain on a profile route.
+          // Check the app's authenticated UI instead of waiting for an exact URL.
+          if (!isXPage(state.url) || !state.authenticated) continue;
+          await browser.saveState();
+          return state.username || undefined;
+        }
+      } catch (error) {
+        // Redirects and closing sign-in popups can invalidate a tab during inspection.
+        const transient = error instanceof CliError && [
+          "The selected browser tab is not open.",
+          "The requested browser tab no longer exists.",
+          "Playwright failed while evaluating application state.",
+          "Playwright failed while listing browser tabs.",
+        ].includes(error.message);
+        if (!transient) throw error;
       }
-    });
-    if (!homeTab) {
-      throw new CliError(
-        "X reached the home feed, but its browser tab could not be found.",
-      );
+      await delay(500);
     }
-    await browser.switchTab(homeTab.tabId);
-    const state = await browser.eval<AuthState>(readAuthStateScript);
-    if (!state.authenticated) {
-      throw new CliError(
-        "X reached the home feed, but the authenticated profile could not be detected.",
-      );
-    }
-    await browser.saveState();
-    return state.username || undefined;
+    throw new CliError(
+      `X authentication did not finish within ${timeoutSeconds} seconds.`,
+    );
   } finally {
     await browser.close();
     await systemBrowser.close();

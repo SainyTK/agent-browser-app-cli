@@ -5,6 +5,8 @@ import {
   mkdtemp,
   mkdir,
   readlink,
+  realpath,
+  readFile,
   rm,
   writeFile,
 } from "node:fs/promises";
@@ -14,7 +16,7 @@ import { join, resolve } from "node:path";
 const installer = resolve(import.meta.dir, "../install.sh");
 const temporaryDirectories: string[] = [];
 
-async function createInstallerFixture(): Promise<{
+async function createInstallerFixture(includeRuntime = true): Promise<{
   binDirectory: string;
   fixtureDirectory: string;
   root: string;
@@ -33,9 +35,15 @@ async function createInstallerFixture(): Promise<{
   );
   await chmod(fixtureBinary, 0o755);
 
+  for (const name of ["playwright", "playwright-core"]) {
+    const directory = join(fixtureDirectory, "agent-browser-app.runtime", "node_modules", name);
+    await mkdir(directory, { recursive: true });
+    await writeFile(join(directory, "package.json"), JSON.stringify({ name, version: "1.63.0" }));
+  }
+
   const archive = join(fixtureDirectory, "release.tar.gz");
   const tar = Bun.spawn(
-    ["tar", "-czf", archive, "-C", fixtureDirectory, "agent-browser-app"],
+    ["tar", "-czf", archive, "-C", fixtureDirectory, "agent-browser-app", ...(includeRuntime ? ["agent-browser-app.runtime"] : [])],
     { stdout: "pipe", stderr: "pipe" },
   );
   expect(await tar.exited).toBe(0);
@@ -158,6 +166,10 @@ describe("release installer", () => {
       "agent-browser-app",
     );
 
+    const executable = await realpath(join(installDirectory, "aba"));
+    expect(executable).toContain(".agent-browser-app-release.");
+    expect(JSON.parse(await readFile(join(executable, "..", "agent-browser-app.runtime", "node_modules", "playwright", "package.json"), "utf8")).version).toBe("1.63.0");
+
     const installed = Bun.spawn([join(installDirectory, "aba")], {
       stdout: "pipe",
       stderr: "pipe",
@@ -166,6 +178,22 @@ describe("release installer", () => {
     expect(await new Response(installed.stdout).text()).toBe(
       "fixture agent-browser-app\n",
     );
+  });
+
+  test("rejects archives missing the runtime without replacing an existing command", async () => {
+    const fixture = await createInstallerFixture(false);
+    const installDirectory = join(fixture.root, "install");
+    await mkdir(installDirectory);
+    const existing = join(installDirectory, "agent-browser-app");
+    await writeFile(existing, "existing installation");
+    const child = Bun.spawn(["sh", installer, "--install-dir", installDirectory], {
+      stdout: "pipe", stderr: "pipe",
+      env: { ...process.env, PATH: `${fixture.binDirectory}:${process.env.PATH}`, FIXTURE_DIRECTORY: fixture.fixtureDirectory },
+    });
+    const stderr = await new Response(child.stderr).text();
+    expect(await child.exited).toBe(1);
+    expect(stderr).toContain("does not contain the Playwright runtime");
+    expect(await readFile(existing, "utf8")).toBe("existing installation");
   });
 
   test("rejects unknown channels before downloading", async () => {

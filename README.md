@@ -4,7 +4,9 @@
 
 `Agent Browser App` provides small, stable commands for authenticated web applications.
 It is also installed as `aba`, a shorter alias that supports the same commands and options.
-It delegates browser work to [agent-browser](https://github.com/vercel-labs/agent-browser) and keeps the underlying browser available for inspection when authentication requires a real user.
+It runs browser work through Playwright under Bun and keeps the browser visible when authentication requires a real user.
+The runtime dependency is pinned to exactly `playwright@1.63.0`.
+The agent-browser executable is no longer required.
 
 The included application adapters are Gemini Notebook, formerly NotebookLM, X, formerly Twitter, and Reddit.
 Gemini Notebook accepts `gnb`, `gemini-notebook`, and `notebooklm`.
@@ -41,17 +43,80 @@ Each application keeps its accounts separate while using both:
             `-- state.json
 ```
 
-The files remain compatible with agent-browser because the wrapper invokes its native `--profile`, `state load`, and `state save` interfaces.
-Treat `state.json` as a secret because it contains authenticated session material.
+Existing agent-browser-compatible account paths, Chrome profiles, and storage-state files remain in place.
+Set `AGENT_BROWSER_HOME` to change the base directory from `~/.agent-browser`.
+Playwright opens each account's isolated persistent browser context in system Chrome by default.
+A populated profile is authoritative, so an older `state.json` does not overwrite its session.
+When the profile is fresh, the CLI imports `state.json` before opening the application.
+Native Chrome login records the profile's credential store so Playwright can reuse its encrypted cookies.
+Existing unmarked profiles retain their legacy credential-store behavior.
+Treat the profile and `state.json` as secrets because they contain authenticated session material.
+
+## Raw Playwright commands
+
+Use `raw` when an app command does not cover the action you need.
+It works with `gnb`, `x`, `reddit`, and their aliases, using the selected account's existing Chrome profile.
+
+```bash
+aba gnb raw 'return await page.title();'
+aba x raw 'await page.getByRole("button", { name: "Retry", exact: true }).click();' --headed
+aba reddit raw --file ./repair.js --account myusername --json
+```
+
+Provide one quoted JavaScript body or `--file <path>`.
+Both accept `await` and `return`, with Playwright `page` and `context` available.
+Files contain an async function body, not an exported function, module, or TypeScript.
+For example, `repair.js` might contain:
+
+```js
+await page.reload();
+await page.getByRole("button", { name: "Retry", exact: true }).click();
+return { title: await page.title(), url: page.url() };
+```
+
+The CLI opens the app home page first.
+Use `--url https://...` to start elsewhere, including a notebook or settings page.
+Use `--account <identity-or-id>` to select an account, or omit it for the active account.
+`--headed` and `--headless` override the app's configuration.
+Raw commands deliberately skip app-specific authentication checks so you can repair an unexpected page.
+An account must already exist, but the script may need to handle an expired login.
+
+`--timeout <seconds>` defaults to 60 and limits asynchronous script execution and Playwright actions.
+Browser startup and initial navigation retain their existing timeouts.
+This is not a hard process deadline and cannot interrupt synchronous JavaScript that blocks the event loop.
+Await every action before returning.
+After success, the CLI saves storage state and closes the browser.
+It also closes the browser on errors, but does not roll back actions or profile changes.
+
+Return a JSON-serializable value to print a result.
+Strings print as text by default, and other values print as JSON.
+`--json` prints `{"result": ...}`, with `null` when the script returns nothing.
+The provided `console` writes to stderr, keeping stdout available for the result.
+Runtime errors omit script details because Playwright errors can expose private values.
+
+Only run scripts you trust.
+Raw code runs locally with Bun privileges, filesystem access, and access to the authenticated account.
+It is not sandboxed and can perform destructive actions.
+Do not print cookies, storage values, passwords, or tokens, or share scripts containing them.
+Use browser interactions rather than private application APIs.
 
 ## Requirements
 
-- Bun 1.3 or newer
-- agent-browser 0.26 or newer
-- A locally available Chrome browser installed through agent-browser
+- Bun 1.3 or newer for source development
+- System Google Chrome for the default browser channel and native system-browser login
 
-agent-browser 0.26 fixed state loading in its native runtime.
-The current development baseline is agent-browser 0.27.1.
+`bun install` installs the exact `playwright@1.63.0` runtime dependency.
+Set `AGENT_BROWSER_APP_BROWSER_BIN` to override the executable used by Playwright.
+For optional Playwright-managed Chromium instead of system Chrome:
+
+```bash
+bunx playwright install chromium
+export AGENT_BROWSER_APP_BROWSER_CHANNEL=chromium
+```
+
+The default channel is `chrome`; the other supported channel is `chromium`.
+Native `--system-browser` login still launches system Chrome, not the Playwright-managed Chromium channel.
+Set `AGENT_BROWSER_APP_SYSTEM_BROWSER_BIN` to override the executable for that native login flow.
 
 ## Install
 
@@ -71,7 +136,12 @@ The installer selects the correct macOS or Linux binary for Intel or ARM, verifi
 Set `AGENT_BROWSER_APP_INSTALL_DIR` or pass `--install-dir` to use another directory.
 Make sure that directory is on `PATH`.
 
-The CLI still requires `agent-browser` and its Chrome installation.
+Chrome is still required for the default configuration.
+The CLI does not require an agent-browser executable.
+Compiled releases include an exact-version Playwright runtime directory beside the executable.
+The installer keeps the executable and runtime together in a versioned directory and points both command names to it.
+Do not move the executable without its runtime directory.
+See [release packaging](release/packaging.md) for details.
 
 ## Install for local development
 
@@ -80,16 +150,48 @@ bun install
 bun link
 ```
 
-Verify agent-browser and both names for this CLI are available:
+Verify both names for this CLI are available:
 
 ```bash
-agent-browser --version
 agent-browser-app --version
 aba --version
 ```
 
 The examples below use `aba`.
 Replace it with `agent-browser-app` if you prefer the full name.
+
+## Per-app browser configuration
+
+Application commands use these defaults:
+
+| App | Default |
+| --- | --- |
+| NotebookLM (`gnb`) | Headless |
+| X (`x`) | Headless |
+| Reddit (`reddit`) | Headed |
+
+Each app reads its own optional `config.json` under `AGENT_BROWSER_HOME`.
+With the default home, the paths are:
+
+```text
+~/.agent-browser/apps/agent-browser-app/gnb/config.json
+~/.agent-browser/apps/agent-browser-app/x/config.json
+~/.agent-browser/apps/agent-browser-app/reddit/config.json
+```
+
+Create the desired file with a boolean `headed` setting:
+
+```json
+{"headed": false}
+```
+
+Set `headed` to `true` for a visible browser.
+A missing file or an empty object uses the app's default.
+Invalid JSON, unknown settings, and non-boolean values report an error without opening a browser.
+Every application command accepts `--headed` and `--headless` to override the file.
+Passing both flags is an error.
+Login commands remain visible and do not use this setting.
+Commands never automatically switch browser modes when blocked.
 
 ## Authenticate
 
@@ -114,8 +216,9 @@ Use system Chrome when that happens:
 aba gnb auth login --account you@example.com --system-browser
 ```
 
-The CLI opens an isolated Chrome profile, waits for the Gemini Notebook home page, attaches agent-browser to save the authenticated state, then closes the isolated browser.
-Notebook commands for that account reopen the same isolated system Chrome profile so Google keeps the browser session it approved.
+The CLI launches native system Chrome with an isolated account profile and waits for the Gemini Notebook home page.
+Playwright attaches over CDP through Bun's native WebSocket transport, saves the authenticated state, and lets the launcher close the isolated browser.
+Notebook commands reopen that same profile through Playwright.
 It does not ask for cookies, passwords, or browser-session data.
 
 List accounts and select the default account:
@@ -241,15 +344,16 @@ Use `--json` for machine-readable output.
 ## Gemini Notebook authentication behavior
 
 Login runs in headed mode because Google may require manual account selection, passkeys, or two-factor authentication.
-Pass `--system-browser` to authenticate in isolated system Chrome when Google rejects the agent-browser window.
-Notebook commands for that account use the same isolated system Chrome profile.
-Normal notebook operations for accounts authenticated without `--system-browser` run headless by default.
-Authenticated operations launch the persistent profile without navigating, load `state.json` into the running session, and then open Gemini Notebook.
-Only `auth login` writes `state.json`.
-Normal notebook operations treat the known-good login state as read-only so a short-lived runtime session cannot overwrite it.
+Pass `--system-browser` to use native system Chrome login when Google rejects the Playwright-controlled window.
+Both login flows use the account's isolated profile, not your regular Chrome profile.
+Notebook commands reopen that persistent profile through Playwright and run headless by default.
+Use the app's `config.json` or an explicit `--headed` or `--headless` flag to choose the browser mode.
+A populated profile supplies authentication directly.
+Only a fresh profile imports `state.json` before navigation.
+Only `auth login` writes `state.json`, but normal browser operations can update the persistent profile.
 
-The wrapper never reads or prints cookie values.
-It only stores account metadata in `accounts.json`.
+The CLI does not print cookie values.
+It stores account metadata in `accounts.json`.
 
 ## X authentication
 
@@ -259,8 +363,9 @@ Start a headed Chrome session and complete X sign-in:
 agent-browser-app x auth login
 ```
 
-The CLI opens X's browser login flow and waits for the authenticated home feed.
-It saves the resulting agent-browser storage state and records the detected username when X exposes the profile navigation link.
+The CLI opens X's browser login flow and detects authenticated account navigation.
+An authenticated page can remain on another X route or retain a sign-in popup.
+It saves Playwright storage state to the existing `state.json` path and records the detected username when X exposes the profile navigation link.
 
 Google can reject sign-in when its OAuth page detects software-controlled Chrome.
 Use the system-browser bootstrap when signing in to X through Google:
@@ -270,8 +375,10 @@ agent-browser-app x auth login --system-browser
 ```
 
 This opens normal Google Chrome with the same isolated account profile.
-Complete X sign-in and wait for the X home feed.
-The CLI attaches agent-browser to that authenticated Chrome instance, saves `state.json`, and closes the isolated browser automatically.
+Complete X sign-in.
+The CLI checks all X tabs for authenticated account navigation, so a remaining sign-in popup does not prevent login detection.
+Playwright attaches to that authenticated Chrome instance over CDP through Bun's native WebSocket transport.
+The CLI saves `state.json` and closes the isolated browser automatically.
 
 To add or refresh a specific account:
 
@@ -331,14 +438,18 @@ agent-browser-app reddit auth login
 ```
 
 The CLI uses normal system Chrome by default because Reddit may challenge software-controlled Chrome.
-It opens Reddit's login page in an isolated profile, waits for an authenticated page, saves the resulting agent-browser storage state, and records the detected username.
+It opens Reddit's login page in an isolated profile, waits for an authenticated page, saves Playwright storage state, and records the detected username.
 The isolated browser closes automatically after authentication is captured.
-For development environments that cannot launch system Chrome, use agent-browser explicitly:
+To use Playwright-controlled login instead of native system Chrome login:
 
 ```bash
-agent-browser-app reddit auth login --agent-browser
+agent-browser-app reddit auth login --playwright
 ```
 
+This uses the configured Playwright browser channel or executable override.
+Reddit may challenge this automated login flow.
+`--agent-browser` remains a deprecated alias for `--playwright` and prints a warning.
+It does not invoke agent-browser.
 The former `--system-browser` option remains accepted for compatibility but is no longer required.
 
 List configured Reddit accounts:
@@ -363,8 +474,9 @@ agent-browser-app reddit feed --limit 10
 agent-browser-app reddit feed --limit 10 --json
 ```
 
-Reddit `feed` and `profile` commands open a visible Chrome window by default because Reddit commonly challenges headless browsers.
-Use `--headless` only in an environment where Reddit accepts headless browsing.
+Reddit `feed` and `profile` commands run headed by default because Reddit can challenge headless browsers even with valid authentication.
+Set `headed` to `false` in Reddit's `config.json`, or pass `--headless`, to run without a visible browser.
+Use `--headed` to override a headless configuration.
 The default feed limit is 20.
 The adapter accumulates posts while scrolling the browser-rendered home feed and stops at the requested limit or when no additional posts load.
 Post output includes the post ID and URL, subreddit, author, title and text, creation time, outbound content URL, score, comment count, and content labels when Reddit exposes them.
@@ -380,7 +492,7 @@ agent-browser-app reddit profile https://www.reddit.com/user/spez/ --json
 Profile URLs from the current, old, new, mobile, and non-participation Reddit hosts are accepted and normalized to `www.reddit.com`.
 Profile output includes the account ID when exposed, username, display name, bio, creation time, available karma counts, follower count, and public admin or moderator labels.
 
-The former `--headed` option remains accepted for compatibility but is no longer required.
+Authentication commands still open a visible browser for manual sign-in.
 Use `--json` for machine-readable output.
 
 Reddit workflows stay browser-driven.
@@ -409,8 +521,20 @@ GitHub Actions publishes releases from two source branches:
 Bump `package.json` before the next LTS release because stable tags are immutable.
 Every release contains standalone archives and SHA-256 checksum files for macOS and Linux on Intel and ARM.
 
-Tests run the complete CLI process against a deterministic fake agent-browser binary.
-Real authenticated verification still requires a user-controlled login:
+## Migration verification
+
+`tests/browser.test.ts` uses real Chrome with temporary isolated profiles and local fixture pages.
+It covers cross-origin frames, file uploads, persistent profiles, storage-state import and export, and native system Chrome CDP attachment.
+CLI tests use a Bun preload that mocks the browser-session boundary.
+Their legacy fixture adapter is test-only and does not verify Playwright itself.
+Compiled-release tests install an archive, run outside the repository through symlink aliases, and verify browser launch, interaction, storage, and CDP attachment.
+CI installs managed Chromium for these checks.
+
+Live checks used isolated copies of the user's saved accounts.
+NotebookLM and Reddit results, cleanup, and remaining coverage limits are recorded in [migration verification](docs/playwright-migration-verification.md).
+X native login, feed, and profile checks passed after fixing route-dependent authentication detection and native credential-store compatibility.
+The tests also cover an authenticated X page with a remaining sign-in dialog and a separate login tab.
+The following commands are manual checks, not a list of completed live tests:
 
 ```bash
 aba gnb auth login

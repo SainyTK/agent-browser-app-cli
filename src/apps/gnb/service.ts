@@ -1,6 +1,6 @@
 import { access, realpath, stat } from "node:fs/promises";
 import { basename } from "node:path";
-import { AgentBrowser } from "../../agent-browser.ts";
+import { createBrowser, type BrowserSession } from "../../browser/index.ts";
 import {
   NOTEBOOK_HOME_URL,
   NOTEBOOK_URL_PATTERN,
@@ -76,6 +76,7 @@ interface ChatPair {
 
 interface ChatState {
   pairs: ChatPair[];
+  loading?: boolean;
 }
 
 const delay = (milliseconds: number) =>
@@ -124,8 +125,8 @@ function isReasoningDisclosure(value: string): boolean {
 }
 
 async function readStableChatState(
-  browser: AgentBrowser,
-  timeoutMs = 10_000,
+  browser: BrowserSession,
+  timeoutMs = 30_000,
 ): Promise<ChatState> {
   const deadline = Date.now() + timeoutMs;
   let latest = await browser.eval<ChatState>(readChatStateScript);
@@ -137,7 +138,7 @@ async function readStableChatState(
     const signature = JSON.stringify(latest);
     if (signature === previousSignature) {
       stablePolls += 1;
-      if (stablePolls >= 3) {
+      if (stablePolls >= 3 && !latest.loading) {
         return latest;
       }
     } else {
@@ -145,7 +146,7 @@ async function readStableChatState(
       stablePolls = 1;
     }
   }
-  return latest;
+  throw new CliError("Gemini Notebook chat did not finish loading before the question could be submitted.");
 }
 
 async function requireState(account: Account): Promise<void> {
@@ -163,7 +164,7 @@ async function startAuthenticatedSystemBrowser(
   timeoutSeconds: number,
   onStarted: () => void = () => undefined,
 ): Promise<{
-  browser: AgentBrowser;
+  browser: BrowserSession;
   close: () => Promise<void>;
 }> {
   const systemBrowser = await startSystemBrowser(
@@ -172,7 +173,7 @@ async function startAuthenticatedSystemBrowser(
     process.env,
     onStarted,
   );
-  const browser = new AgentBrowser(account);
+  const browser = createBrowser(account);
   try {
     await browser.attach(systemBrowser.cdpPort);
     const deadline = Date.now() + timeoutSeconds * 1000;
@@ -214,7 +215,7 @@ async function startAuthenticatedSystemBrowser(
 
 async function runAuthenticated<T>(
   account: Account,
-  operation: (browser: AgentBrowser) => Promise<T>,
+  operation: (browser: BrowserSession) => Promise<T>,
 ): Promise<T> {
   await requireState(account);
   if (account.useSystemBrowser) {
@@ -225,7 +226,7 @@ async function runAuthenticated<T>(
       await session.close();
     }
   }
-  const browser = new AgentBrowser(account);
+  const browser = createBrowser(account);
   try {
     return await operation(browser);
   } finally {
@@ -246,7 +247,7 @@ export async function login(
   timeoutSeconds: number,
   onWaiting: () => void,
 ): Promise<string | undefined> {
-  const browser = new AgentBrowser(account);
+  const browser = createBrowser(account);
   try {
     await browser.open(NOTEBOOK_HOME_URL, true);
     onWaiting();
@@ -276,7 +277,6 @@ export async function loginWithSystemBrowser(
   timeoutSeconds: number,
   onWaiting: () => void,
 ): Promise<string | undefined> {
-  await new AgentBrowser(account).close();
   const session = await startAuthenticatedSystemBrowser(
     account,
     timeoutSeconds,
@@ -614,7 +614,7 @@ function resolveSelectedSources(
 }
 
 async function selectSourcesForQuestion(
-  browser: AgentBrowser,
+  browser: BrowserSession,
   sources: SourceSummary[],
   selectedSources: SourceSummary[],
 ): Promise<void> {
@@ -871,7 +871,7 @@ export async function uploadNotebookFiles(
 }
 
 async function loadSources(
-  browser: AgentBrowser,
+  browser: BrowserSession,
   timeoutMs = 30_000,
 ): Promise<SourceListState> {
   await delay(2000);
@@ -935,7 +935,7 @@ function addedSourcesSince(
 }
 
 async function waitForAddedSources(
-  browser: AgentBrowser,
+  browser: BrowserSession,
   baseline: SourceSummary[],
   expectedCount: number,
   timeoutSeconds: number,
@@ -972,7 +972,7 @@ async function waitForAddedSources(
 }
 
 async function markAndClickSourceOption(
-  browser: AgentBrowser,
+  browser: BrowserSession,
   option: "copied-text" | "websites" | "drive",
 ): Promise<void> {
   const marked = await waitUntil(
@@ -998,7 +998,7 @@ async function addSourcesFromDialog(
   timeoutSeconds: number,
   expectedCount: number,
   description: string,
-  submit: (browser: AgentBrowser) => Promise<void>,
+  submit: (browser: BrowserSession) => Promise<void>,
 ): Promise<AddedSourcesResult> {
   const url = directNotebookUrl(target);
   const match = url?.match(NOTEBOOK_URL_PATTERN);
@@ -1170,8 +1170,33 @@ interface DrivePickerState {
   exactMatchCount: number;
 }
 
+async function waitForDrivePickerReady(
+  browser: BrowserSession,
+  target: string,
+): Promise<DrivePickerState> {
+  const deadline = Date.now() + 20_000;
+  let signature = "";
+  let stablePolls = 0;
+  while (Date.now() < deadline) {
+    const state = await browser.evalInFrame<DrivePickerState>(
+      "docs.google.com/picker/",
+      readDrivePickerStateScript(target),
+    );
+    const nextSignature = JSON.stringify(state);
+    if (state.ready && !state.searching && nextSignature === signature) {
+      stablePolls += 1;
+      if (stablePolls >= 3) return state;
+    } else {
+      stablePolls = 0;
+    }
+    signature = nextSignature;
+    await delay(500);
+  }
+  throw new CliError("Google Drive picker did not finish loading before search.");
+}
+
 async function waitForDrivePickerResults(
-  browser: AgentBrowser,
+  browser: BrowserSession,
   target: string,
 ): Promise<DrivePickerState> {
   await delay(1000);
@@ -1248,10 +1273,7 @@ export async function addDriveSource(
     `Drive item "${normalizedTarget}"`,
     async (browser) => {
       await markAndClickSourceOption(browser, "drive");
-      let picker = await browser.evalInFrame<DrivePickerState>(
-        "docs.google.com/picker/",
-        readDrivePickerStateScript(normalizedTarget),
-      );
+      let picker = await waitForDrivePickerReady(browser, normalizedTarget);
       if (picker.exactMatchCount === 0) {
         const searchReady = await waitUntil(
           () =>

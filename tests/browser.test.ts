@@ -1,0 +1,255 @@
+import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
+import { mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { PlaywrightBrowser } from "../src/browser/playwright.ts";
+import { compileRaw, runRaw } from "../src/raw.ts";
+import { AccountRegistry, getProfileCredentialStore, type Account } from "../src/registry.ts";
+import { getAppPaths } from "../src/config.ts";
+import { startSystemBrowser } from "../src/apps/system-browser.ts";
+import { markConfirmNotebookRemovalScript, readChatStateScript } from "../src/apps/gnb/browser-scripts.ts";
+import { readAuthStateScript as readXAuthStateScript } from "../src/apps/x/browser-scripts.ts";
+
+const homes: string[] = [];
+const sessions: PlaywrightBrowser[] = [];
+let server: ReturnType<typeof Bun.serve>;
+let frameServer: ReturnType<typeof Bun.serve>;
+let baseUrl: string;
+
+beforeAll(() => {
+  frameServer = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch() {
+    return new Response('<input id="search"><script>document.querySelector("input").addEventListener("keydown", e => { if (e.key === "Enter") document.body.dataset.enter = "yes"; });</script>', { headers: { "content-type": "text/html" } });
+  } });
+  server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request) {
+    const path = new URL(request.url).pathname;
+    const html = path === "/frames"
+      ? `<iframe src="http://localhost:${frameServer.port}/picker"></iframe>`
+      : `<title>Fixture page</title><input id="value"><button id="store" onclick="localStorage.setItem('fixture', document.querySelector('#value').value)">Store</button><input id="files" type="file" multiple><input id="single" type="file">`;
+    return new Response(html, { headers: { "content-type": "text/html" } });
+  } });
+  baseUrl = `http://127.0.0.1:${server.port}`;
+});
+
+afterEach(async () => {
+  await Promise.all(sessions.splice(0).map((browser) => browser.close()));
+  await Promise.all(homes.splice(0).map((home) => rm(home, { recursive: true, force: true })));
+});
+afterAll(() => { server.stop(true); frameServer.stop(true); });
+
+async function account(): Promise<Account> {
+  const home = await mkdtemp(join(tmpdir(), "aba-playwright-test-"));
+  homes.push(home);
+  return { id: "fixture", profileDir: join(home, "profile"), stateFile: join(home, "state.json"), createdAt: "", updatedAt: "" };
+}
+function session(value: Account): PlaywrightBrowser {
+  const browser = new PlaywrightBrowser(value, "fixture");
+  sessions.push(browser);
+  return browser;
+}
+
+describe("Playwright browser engine with real Chrome", () => {
+  test("navigates, fills, clicks, evaluates, enumerates tabs and persists an isolated profile", async () => {
+    const value = await account();
+    const browser = session(value);
+    await browser.open(baseUrl);
+    await browser.fill("#value", "fixture-value");
+    await browser.click("#store");
+    expect(await browser.eval<string>("localStorage.getItem('fixture')")).toBe("fixture-value");
+    const tabs = await browser.listTabs();
+    expect(tabs[0]?.title).toBe("Fixture page");
+    await browser.switchTab(tabs[0]!.tabId);
+    expect(await browser.currentUrl()).toBe(`${baseUrl}/`);
+    await browser.saveState();
+    expect((await stat(value.stateFile)).mode & 0o777).toBe(0o600);
+    expect((await stat(value.profileDir)).mode & 0o777).toBe(0o700);
+    await browser.close();
+    await browser.close();
+    const restored = session(value);
+    await restored.open(baseUrl);
+    expect(await restored.eval<string>("localStorage.getItem('fixture')")).toBe("fixture-value");
+  }, 30_000);
+
+  test("runs the real raw CLI against a local page with a temporary account", async () => {
+    const home = await mkdtemp(join(tmpdir(), "aba-raw-cli-test-"));
+    homes.push(home);
+    const env = { ...process.env, AGENT_BROWSER_HOME: home };
+    const registry = new AccountRegistry(getAppPaths(env, "gnb"));
+    const value = await registry.accountForLogin("fixture@example.test");
+    await registry.saveAuthenticated(value, "fixture@example.test");
+    const script = join(home, "repair.js");
+    await writeFile(script, `
+      await page.locator('#value').fill('cli-fixture');
+      await page.getByRole('button', { name: 'Store', exact: true }).click();
+      console.log('local fixture completed');
+      return { title: await page.title(), value: await page.locator('#value').inputValue() };
+    `);
+    const child = Bun.spawn([process.execPath, join(import.meta.dir, "../src/cli.ts"), "gnb", "raw", "--file", script, "--url", baseUrl, "--account", "fixture@example.test", "--headless", "--json"], { env, stdout: "pipe", stderr: "pipe" });
+    const [exitCode, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+    expect(exitCode).toBe(0);
+    expect(JSON.parse(stdout)).toEqual({ result: { title: "Fixture page", value: "cli-fixture" } });
+    expect(stderr).toContain("local fixture completed");
+    for (const [source, message] of [
+      ['throw new Error("private-marker");', "Raw Playwright code failed"],
+      ["await new Promise(() => {});", "timed out while running raw Playwright code"],
+    ]) {
+      const failed = Bun.spawn([process.execPath, join(import.meta.dir, "../src/cli.ts"), "gnb", "raw", source!, "--url", baseUrl, "--headless", "--timeout", "0.1", "--json"], { env, stdout: "pipe", stderr: "pipe" });
+      const [code, output, error] = await Promise.all([failed.exited, new Response(failed.stdout).text(), new Response(failed.stderr).text()]);
+      expect(code).toBe(1);
+      expect(output).toBe("");
+      expect(error).toContain(message!);
+      expect(error).not.toContain("private-marker");
+    }
+    // Reopening after both failure paths proves their contexts were closed.
+    const restored = session(value);
+    await restored.open(baseUrl);
+    expect(await restored.eval<string>("localStorage.getItem('fixture')")).toBe("cli-fixture");
+  }, 30_000);
+
+  test("runs raw Playwright locators and persists state",  async () => {
+    const value = await account();
+    const result = await runRaw(value, "x", baseUrl, compileRaw(`
+      await page.locator('#value').fill('raw-fixture');
+      await page.getByRole('button', { name: 'Store', exact: true }).click();
+      const extra = await context.newPage();
+      await extra.close();
+      return { title: await page.title(), value: await page.locator('#value').inputValue() };
+    `), false, 5000);
+    expect(result).toEqual({ title: "Fixture page", value: "raw-fixture" });
+    expect((await stat(value.stateFile)).mode & 0o777).toBe(0o600);
+    const restored = session(value);
+    await restored.open(baseUrl);
+    expect(await restored.eval<string>("localStorage.getItem('fixture')")).toBe("raw-fixture");
+    await restored.close();
+  }, 30_000);
+
+  test("imports legacy state into a new profile and does not overwrite a populated profile", async () => {
+    const value = await account();
+    await writeFile(value.stateFile, JSON.stringify({ cookies: [], origins: [{ origin: baseUrl, localStorage: [{ name: "fixture", value: "imported" }] }] }));
+    const browser = session(value);
+    await browser.open(baseUrl);
+    expect(await browser.eval<string>("localStorage.getItem('fixture')")).toBe("imported");
+    await browser.fill("#value", "newer-profile");
+    await browser.click("#store");
+    await browser.close();
+    const restored = session(value);
+    await restored.open(baseUrl);
+    expect(await restored.eval<string>("localStorage.getItem('fixture')")).toBe("newer-profile");
+    await restored.saveState();
+    const saved = JSON.parse(await readFile(value.stateFile, "utf8"));
+    expect(saved.origins[0].localStorage).toEqual([{ name: "fixture", value: "newer-profile" }]);
+  }, 30_000);
+
+  test("uses cross-origin frames for evaluation and real keyboard input", async () => {
+    const browser = session(await account());
+    await browser.open(`${baseUrl}/frames`);
+    expect(await browser.fillInFrame("/picker", "#search", "Drive fixture", true)).toBe(true);
+    expect(await browser.evalInFrame<string>("/picker", "document.querySelector('#search').value")).toBe("Drive fixture");
+    expect(await browser.evalInFrame<string>("/picker", "document.body.dataset.enter")).toBe("yes");
+    expect(await browser.fillInFrame("/picker", "#missing", "unused")).toBe(false);
+  }, 30_000);
+
+  test("uploads real files and validates single-file choosers", async () => {
+    const value = await account();
+    const browser = session(value);
+    const one = join(homes.at(-1)!, "one.txt");
+    const two = join(homes.at(-1)!, "two.txt");
+    await writeFile(one, "one");
+    await writeFile(two, "two");
+    await browser.open(baseUrl);
+    await browser.uploadFilesThroughFileChooser("#files", [one, two]);
+    expect(await browser.eval<string[]>("Array.from(document.querySelector('#files').files, f => f.name)")).toEqual(["one.txt", "two.txt"]);
+    await expect(browser.uploadFilesThroughFileChooser("#single", [one, two])).rejects.toThrow("single-file chooser");
+    await expect(browser.uploadFilesThroughFileChooser("#files", [])).rejects.toThrow("At least one file");
+  }, 30_000);
+
+  test("attaches to system Chrome and disconnects without terminating its browser", async () => {
+    const value = await account();
+    await mkdir(value.profileDir, { recursive: true, mode: 0o700 });
+    const system = await startSystemBrowser(value, baseUrl, {
+      ...process.env,
+      AGENT_BROWSER_APP_SYSTEM_BROWSER_BIN: join(import.meta.dir, "support/headless-chrome.ts"),
+    });
+    try {
+      const browser = session(value);
+      await browser.attach(system.cdpPort);
+      const tabs = await browser.listTabs();
+      await browser.switchTab(tabs.find((tab) => tab.url.startsWith(baseUrl))!.tabId);
+      await browser.fill("#value", "attached");
+      await browser.eval(`document.cookie = 'native-fixture=persisted; max-age=3600; path=/'`);
+      await browser.saveState();
+      await browser.close();
+      const response = await fetch(`http://127.0.0.1:${system.cdpPort}/json/list`);
+      expect(response.ok).toBe(true);
+    } finally {
+      await system.close();
+    }
+    const reused = session({ ...value, credentialStore: "native" });
+    await reused.open(baseUrl);
+    expect(await reused.eval<string>("document.cookie")).toContain("native-fixture=persisted");
+  }, 30_000);
+
+  test("preserves legacy credential-store defaults and honors native login metadata", async () => {
+    const value = await account();
+    expect(getProfileCredentialStore(value)).toBe("playwright");
+    expect(getProfileCredentialStore({ ...value, useSystemBrowser: true })).toBe("native");
+    expect(getProfileCredentialStore({ ...value, credentialStore: "native" })).toBe("native");
+    expect(getProfileCredentialStore({ ...value, useSystemBrowser: true, credentialStore: "playwright" })).toBe("playwright");
+    expect(() => getProfileCredentialStore({ ...value, credentialStore: "invalid" } as unknown as Account)).toThrow("credential-store metadata is invalid");
+  });
+
+  test("rejects locked profiles, invalid channels, and malformed storage without exposing secrets", async () => {
+    const value = await account();
+    await mkdir(value.profileDir);
+    await symlink("nonexistent-host-123", join(value.profileDir, "SingletonLock"));
+    await expect(session(value).open(baseUrl)).rejects.toThrow("profile is already open");
+    await rm(join(value.profileDir, "SingletonLock"));
+    const invalid = new PlaywrightBrowser(value, "fixture", { AGENT_BROWSER_APP_BROWSER_CHANNEL: "invalid" });
+    await expect(invalid.open(baseUrl)).rejects.toThrow("must be chrome or chromium");
+    await writeFile(value.stateFile, "SECRET invalid JSON");
+    await expect(session(value).open(baseUrl)).rejects.toThrow("Could not read authentication storage state");
+  });
+
+  test("detects authenticated X navigation behind a sign-in dialog away from home", async () => {
+    const browser = session(await account());
+    await browser.open(`${baseUrl}/i/flow/login`);
+    await browser.eval(`document.body.innerHTML = '<nav aria-label="Primary" aria-hidden="true"><a data-testid="AppTabBar_Profile_Link" href="/fixture_user">Profile</a><a data-testid="AppTabBar_Home_Link" href="/home">Home</a><button data-testid="SideNav_AccountSwitcher_Button">Account</button></nav><div role="dialog">Sign in to X</div>'`);
+    const state = await browser.eval<{ authenticated: boolean; loginRequired: boolean; username: string | null }>(readXAuthStateScript);
+    expect(state).toMatchObject({ authenticated: true, loginRequired: false, username: "fixture_user" });
+  }, 30_000);
+
+  test("does not mistake guest X home content for an authenticated account", async () => {
+    const browser = session(await account());
+    await browser.open(`${baseUrl}/home`);
+    await browser.eval(`document.body.innerHTML = '<nav aria-label="Primary"><a href="/i/flow/login">Sign in</a></nav><div data-testid="primaryColumn"><article>Public post<a aria-label="Profile" href="/public_author">Author profile</a></article></div><div role="dialog">Sign in to X</div>'`);
+    expect((await browser.eval<{ authenticated: boolean }>(readXAuthStateScript)).authenticated).toBe(false);
+    await browser.eval(`document.body.innerHTML = '<button data-testid="SideNav_AccountSwitcher_Button">Account</button><a data-testid="AppTabBar_Home_Link" href="/home">Home</a>'`);
+    expect((await browser.eval<{ authenticated: boolean }>(readXAuthStateScript)).authenticated).toBe(true);
+  }, 30_000);
+
+  test("reports chat loading only for visible progress controls", async () => {
+    const browser = session(await account());
+    await browser.open(baseUrl);
+    await browser.eval(`document.body.innerHTML = '<div role="progressbar" style="width:24px;height:24px"></div>'`);
+    expect((await browser.eval<{ loading: boolean }>(readChatStateScript)).loading).toBe(true);
+    await browser.eval(`document.querySelector('[role="progressbar"]').style.display = 'none'`);
+    expect((await browser.eval<{ loading: boolean }>(readChatStateScript)).loading).toBe(false);
+  }, 30_000);
+
+  test("recognizes the current NotebookLM deletion dialog without matching other dialogs", async () => {
+    const browser = session(await account());
+    await browser.open(baseUrl);
+    await browser.eval(`document.body.innerHTML = '<div role="dialog">Delete this notebook? This notebook and all of its content will be permanently deleted across all locations, including Gemini.<button>Cancel</button><button>Delete</button></div>'`);
+    expect(await browser.eval<boolean>(markConfirmNotebookRemovalScript)).toBe(true);
+    expect(await browser.eval<string>(`document.querySelector('[data-agent-browser-app-target="confirm-notebook-removal"]').textContent`)).toBe("Delete");
+    await browser.eval(`document.body.innerHTML = '<div role="dialog">Delete this source?<button>Delete</button></div>'`);
+    expect(await browser.eval<boolean>(markConfirmNotebookRemovalScript)).toBe(false);
+  }, 30_000);
+
+  test("redacts browser evaluation errors and closes the session", async () => {
+    const browser = session(await account());
+    await browser.open(baseUrl);
+    await expect(browser.eval("(() => { throw new Error('SECRET fixture credential'); })()")).rejects.toThrow("Playwright failed while evaluating application state.");
+    await browser.close();
+    await expect(browser.currentUrl()).rejects.toThrow("not open");
+  }, 30_000);
+});
