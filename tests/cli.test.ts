@@ -358,6 +358,12 @@ describe("agent-browser-app CLI with legacy test adapter", () => {
     );
     expect(headlessFeedResult.exitCode).toBe(0);
 
+    const headedFeedResult = await runCli(
+      ["reddit", "feed", "--limit", "1", "--headed", "--json"],
+      home,
+    );
+    expect(headedFeedResult.exitCode).toBe(0);
+
     const profileResult = await runCli(
       [
         "reddit",
@@ -380,6 +386,12 @@ describe("agent-browser-app CLI with legacy test adapter", () => {
     expect(profileTextResult.exitCode).toBe(0);
     expect(profileTextResult.stdout).toContain("spez (u/spez)");
     expect(profileTextResult.stdout).toContain("Karma: 123456");
+
+    const headedProfileResult = await runCli(
+      ["reddit", "profile", "u/spez", "--headed", "--json"],
+      home,
+    );
+    expect(headedProfileResult.exitCode).toBe(0);
 
     const xAccounts = await runCli(
       ["x", "auth", "list", "--json"],
@@ -425,17 +437,18 @@ describe("agent-browser-app CLI with legacy test adapter", () => {
       }),
     ).toBe(true);
     const redditPageInvocations = invocations.filter((candidate) =>
-      candidate.includes("https://www.reddit.com/") ||
-      candidate.includes("https://www.reddit.com/user/spez/")
+      !candidate.some((argument) => argument.startsWith("agent-browser-app-reddit-login-")) &&
+      (candidate.includes("https://www.reddit.com/") ||
+        candidate.includes("https://www.reddit.com/user/spez/"))
     );
-    expect(redditPageInvocations.some((invocation) => {
+    expect(redditPageInvocations.filter((invocation) => {
       const headedIndex = invocation.indexOf("--headed");
       return headedIndex >= 0 && invocation[headedIndex + 1] === "true";
-    })).toBe(true);
-    expect(redditPageInvocations.some((invocation) => {
+    })).toHaveLength(2);
+    expect(redditPageInvocations.filter((invocation) => {
       const headedIndex = invocation.indexOf("--headed");
       return headedIndex >= 0 && invocation[headedIndex + 1] === "false";
-    })).toBe(true);
+    })).toHaveLength(5);
   }, 20_000);
 
   test("validates Reddit command arguments and options", async () => {

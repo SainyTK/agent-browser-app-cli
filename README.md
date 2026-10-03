@@ -392,8 +392,10 @@ agent-browser-app reddit feed --limit 10
 agent-browser-app reddit feed --limit 10 --json
 ```
 
-Reddit `feed` and `profile` commands open a visible Chrome window by default because Reddit commonly challenges headless browsers.
-Use `--headless` only in an environment where Reddit accepts headless browsing.
+Reddit `feed` and `profile` commands run headless by default, like X and NotebookLM commands.
+Use `--headed` to inspect the browser or handle Reddit browser-verification challenges.
+The explicit `--headless` option remains accepted for compatibility.
+Commands never automatically open a visible browser when headless browsing is blocked.
 The default feed limit is 20.
 The adapter accumulates posts while scrolling the browser-rendered home feed and stops at the requested limit or when no additional posts load.
 Post output includes the post ID and URL, subreddit, author, title and text, creation time, outbound content URL, score, comment count, and content labels when Reddit exposes them.
@@ -409,7 +411,7 @@ agent-browser-app reddit profile https://www.reddit.com/user/spez/ --json
 Profile URLs from the current, old, new, mobile, and non-participation Reddit hosts are accepted and normalized to `www.reddit.com`.
 Profile output includes the account ID when exposed, username, display name, bio, creation time, available karma counts, follower count, and public admin or moderator labels.
 
-The former `--headed` option remains accepted for compatibility but is no longer required.
+Authentication commands still open a visible browser for manual sign-in.
 Use `--json` for machine-readable output.
 
 Reddit workflows stay browser-driven.

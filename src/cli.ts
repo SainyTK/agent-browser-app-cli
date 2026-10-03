@@ -197,8 +197,8 @@ Usage:
   agent-browser-app x profile <url-or-id> [--account <handle-or-id>] [--headed] [--json]
   agent-browser-app reddit auth login [--timeout <seconds>] [--playwright]
   agent-browser-app reddit auth list [--json]
-  agent-browser-app reddit feed [--limit <count>] [--account <username-or-id>] [--headless] [--json]
-  agent-browser-app reddit profile <url-or-username> [--account <username-or-id>] [--headless] [--json]
+  agent-browser-app reddit feed [--limit <count>] [--account <username-or-id>] [--headed | --headless] [--json]
+  agent-browser-app reddit profile <url-or-username> [--account <username-or-id>] [--headed | --headless] [--json]
 
 Executable aliases:
   agent-browser-app, aba
@@ -661,7 +661,7 @@ async function handleRedditFeed(
   const posts = await readRedditFeed(
     account,
     limit,
-    !hasFlag(options, "headless"),
+    hasFlag(options, "headed"),
   );
   if (hasFlag(options, "json")) {
     printJson({
@@ -717,7 +717,7 @@ async function handleRedditProfile(
   const profile = await readRedditProfile(
     account,
     target,
-    !hasFlag(options, "headless"),
+    hasFlag(options, "headed"),
   );
   if (hasFlag(options, "json")) {
     printJson(profile);

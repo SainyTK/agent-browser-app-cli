@@ -143,7 +143,7 @@ function expiredAuthenticationError(): CliError {
 
 function blockedError(): CliError {
   return new CliError(
-    "Reddit requested browser verification. Retry without --headless, or refresh authentication with: agent-browser-app reddit auth login",
+    "Reddit requested browser verification. Retry with --headed, or refresh authentication with: agent-browser-app reddit auth login",
   );
 }
 
