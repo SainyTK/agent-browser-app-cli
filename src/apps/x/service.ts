@@ -10,7 +10,7 @@ import {
 } from "./browser-scripts.ts";
 import { startSystemBrowser } from "../system-browser.ts";
 
-const X_HOME_URL = "https://x.com/home";
+export const X_HOME_URL = "https://x.com/home";
 const X_LOGIN_URL = "https://x.com/i/flow/login";
 function isXPage(url: string): boolean {
   try {

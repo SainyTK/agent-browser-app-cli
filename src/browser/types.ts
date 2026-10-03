@@ -1,3 +1,7 @@
+import type { BrowserContext, Page } from "playwright";
+
+export type PlaywrightOperation<T = unknown> = (page: Page, context: BrowserContext) => Promise<T>;
+
 export interface BrowserTab {
   active: boolean;
   label: string | null;
@@ -21,6 +25,7 @@ export interface BrowserSession {
   fill(selector: string, value: string): Promise<void>;
   press(key: string): Promise<void>;
   uploadFilesThroughFileChooser(triggerSelector: string, filePaths: string[]): Promise<void>;
+  runPlaywright<T>(operation: PlaywrightOperation<T>, timeoutMs: number): Promise<T>;
   saveState(): Promise<void>;
   close(): Promise<void>;
 }

@@ -2,6 +2,8 @@ import { expect, test } from "bun:test";
 import { cp, mkdtemp, mkdir, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { AccountRegistry } from "../src/registry.ts";
+import { getAppPaths } from "../src/config.ts";
 
 const root = resolve(import.meta.dir, "..");
 
@@ -55,6 +57,13 @@ test("compiled release installs its exact runtime and browses outside the reposi
     const invalid = await run([alias, "not-a-command"], outside, home);
     expect(invalid.code).toBe(2);
     expect(invalid.stderr).toContain("Error:");
+
+    const registry = new AccountRegistry(getAppPaths({ ...process.env, AGENT_BROWSER_HOME: home }, "gnb"));
+    const account = await registry.accountForLogin("release-fixture@example.test");
+    await registry.saveAuthenticated(account, "release-fixture@example.test");
+    const raw = await run([alias, "gnb", "raw", 'await page.locator("#value").fill("compiled raw"); return await page.locator("#value").inputValue();', "--url", server.url.origin, "--headless", "--json"], outside, home);
+    expect(raw.code, raw.stderr).toBe(0);
+    expect(JSON.parse(raw.stdout)).toEqual({ result: "compiled raw" });
 
     // Compile the production BrowserSession using exactly the release build
     // plugin and copied runtime, without adding a diagnostic command to the CLI.

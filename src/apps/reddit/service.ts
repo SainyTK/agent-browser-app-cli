@@ -14,7 +14,7 @@ import {
   scrollFeedScript,
 } from "./browser-scripts.ts";
 
-const REDDIT_HOME_URL = "https://www.reddit.com/";
+export const REDDIT_HOME_URL = "https://www.reddit.com/";
 const REDDIT_LOGIN_URL = "https://www.reddit.com/login/";
 const REDDIT_HOSTS = new Set([
   "m.reddit.com",

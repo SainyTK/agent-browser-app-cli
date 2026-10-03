@@ -3,7 +3,9 @@ import { mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { PlaywrightBrowser } from "../src/browser/playwright.ts";
-import { getProfileCredentialStore, type Account } from "../src/registry.ts";
+import { compileRaw, runRaw } from "../src/raw.ts";
+import { AccountRegistry, getProfileCredentialStore, type Account } from "../src/registry.ts";
+import { getAppPaths } from "../src/config.ts";
 import { startSystemBrowser } from "../src/apps/system-browser.ts";
 import { markConfirmNotebookRemovalScript, readChatStateScript } from "../src/apps/gnb/browser-scripts.ts";
 import { readAuthStateScript as readXAuthStateScript } from "../src/apps/x/browser-scripts.ts";
@@ -65,6 +67,59 @@ describe("Playwright browser engine with real Chrome", () => {
     const restored = session(value);
     await restored.open(baseUrl);
     expect(await restored.eval<string>("localStorage.getItem('fixture')")).toBe("fixture-value");
+  }, 30_000);
+
+  test("runs the real raw CLI against a local page with a temporary account", async () => {
+    const home = await mkdtemp(join(tmpdir(), "aba-raw-cli-test-"));
+    homes.push(home);
+    const env = { ...process.env, AGENT_BROWSER_HOME: home };
+    const registry = new AccountRegistry(getAppPaths(env, "gnb"));
+    const value = await registry.accountForLogin("fixture@example.test");
+    await registry.saveAuthenticated(value, "fixture@example.test");
+    const script = join(home, "repair.js");
+    await writeFile(script, `
+      await page.locator('#value').fill('cli-fixture');
+      await page.getByRole('button', { name: 'Store', exact: true }).click();
+      console.log('local fixture completed');
+      return { title: await page.title(), value: await page.locator('#value').inputValue() };
+    `);
+    const child = Bun.spawn([process.execPath, join(import.meta.dir, "../src/cli.ts"), "gnb", "raw", "--file", script, "--url", baseUrl, "--account", "fixture@example.test", "--headless", "--json"], { env, stdout: "pipe", stderr: "pipe" });
+    const [exitCode, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+    expect(exitCode).toBe(0);
+    expect(JSON.parse(stdout)).toEqual({ result: { title: "Fixture page", value: "cli-fixture" } });
+    expect(stderr).toContain("local fixture completed");
+    for (const [source, message] of [
+      ['throw new Error("private-marker");', "Raw Playwright code failed"],
+      ["await new Promise(() => {});", "timed out while running raw Playwright code"],
+    ]) {
+      const failed = Bun.spawn([process.execPath, join(import.meta.dir, "../src/cli.ts"), "gnb", "raw", source!, "--url", baseUrl, "--headless", "--timeout", "0.1", "--json"], { env, stdout: "pipe", stderr: "pipe" });
+      const [code, output, error] = await Promise.all([failed.exited, new Response(failed.stdout).text(), new Response(failed.stderr).text()]);
+      expect(code).toBe(1);
+      expect(output).toBe("");
+      expect(error).toContain(message!);
+      expect(error).not.toContain("private-marker");
+    }
+    // Reopening after both failure paths proves their contexts were closed.
+    const restored = session(value);
+    await restored.open(baseUrl);
+    expect(await restored.eval<string>("localStorage.getItem('fixture')")).toBe("cli-fixture");
+  }, 30_000);
+
+  test("runs raw Playwright locators and persists state",  async () => {
+    const value = await account();
+    const result = await runRaw(value, "x", baseUrl, compileRaw(`
+      await page.locator('#value').fill('raw-fixture');
+      await page.getByRole('button', { name: 'Store', exact: true }).click();
+      const extra = await context.newPage();
+      await extra.close();
+      return { title: await page.title(), value: await page.locator('#value').inputValue() };
+    `), false, 5000);
+    expect(result).toEqual({ title: "Fixture page", value: "raw-fixture" });
+    expect((await stat(value.stateFile)).mode & 0o777).toBe(0o600);
+    const restored = session(value);
+    await restored.open(baseUrl);
+    expect(await restored.eval<string>("localStorage.getItem('fixture')")).toBe("raw-fixture");
+    await restored.close();
   }, 30_000);
 
   test("imports legacy state into a new profile and does not overwrite a populated profile", async () => {

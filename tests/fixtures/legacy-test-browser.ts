@@ -2,7 +2,7 @@ import { access, appendFile, chmod, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { CliError } from "../../src/errors.ts";
 import type { Account } from "../../src/registry.ts";
-import type { BrowserSession, BrowserTab } from "../../src/browser/types.ts";
+import type { BrowserSession, BrowserTab, PlaywrightOperation } from "../../src/browser/types.ts";
 
 // Test-only adapter for the legacy fake-agent-browser script.
 // Its logged arguments describe this adapter, not the Playwright engine.
@@ -33,6 +33,18 @@ export class LegacyTestBrowser implements BrowserSession {
       }
     }
     await this.run(["open", url]);
+  }
+
+  async runPlaywright<T>(operation: PlaywrightOperation<T>, _timeoutMs: number): Promise<T> {
+    // Only the raw CLI contract is mocked here. Real locator coverage uses Chrome.
+    const url = await this.currentUrl();
+    const page = { url: () => url } as Parameters<PlaywrightOperation>[0];
+    const context = { pages: () => [page] } as Parameters<PlaywrightOperation>[1];
+    try {
+      return await operation(page, context);
+    } catch {
+      throw new CliError("Raw Playwright code failed. Check your script and selectors.");
+    }
   }
 
   async currentUrl(): Promise<string> {

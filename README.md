@@ -52,6 +52,54 @@ Native Chrome login records the profile's credential store so Playwright can reu
 Existing unmarked profiles retain their legacy credential-store behavior.
 Treat the profile and `state.json` as secrets because they contain authenticated session material.
 
+## Raw Playwright commands
+
+Use `raw` when an app command does not cover the action you need.
+It works with `gnb`, `x`, `reddit`, and their aliases, using the selected account's existing Chrome profile.
+
+```bash
+aba gnb raw 'return await page.title();'
+aba x raw 'await page.getByRole("button", { name: "Retry", exact: true }).click();' --headed
+aba reddit raw --file ./repair.js --account myusername --json
+```
+
+Provide one quoted JavaScript body or `--file <path>`.
+Both accept `await` and `return`, with Playwright `page` and `context` available.
+Files contain an async function body, not an exported function, module, or TypeScript.
+For example, `repair.js` might contain:
+
+```js
+await page.reload();
+await page.getByRole("button", { name: "Retry", exact: true }).click();
+return { title: await page.title(), url: page.url() };
+```
+
+The CLI opens the app home page first.
+Use `--url https://...` to start elsewhere, including a notebook or settings page.
+Use `--account <identity-or-id>` to select an account, or omit it for the active account.
+`--headed` and `--headless` override the app's configuration.
+Raw commands deliberately skip app-specific authentication checks so you can repair an unexpected page.
+An account must already exist, but the script may need to handle an expired login.
+
+`--timeout <seconds>` defaults to 60 and limits asynchronous script execution and Playwright actions.
+Browser startup and initial navigation retain their existing timeouts.
+This is not a hard process deadline and cannot interrupt synchronous JavaScript that blocks the event loop.
+Await every action before returning.
+After success, the CLI saves storage state and closes the browser.
+It also closes the browser on errors, but does not roll back actions or profile changes.
+
+Return a JSON-serializable value to print a result.
+Strings print as text by default, and other values print as JSON.
+`--json` prints `{"result": ...}`, with `null` when the script returns nothing.
+The provided `console` writes to stderr, keeping stdout available for the result.
+Runtime errors omit script details because Playwright errors can expose private values.
+
+Only run scripts you trust.
+Raw code runs locally with Bun privileges, filesystem access, and access to the authenticated account.
+It is not sandboxed and can perform destructive actions.
+Do not print cookies, storage values, passwords, or tokens, or share scripts containing them.
+Use browser interactions rather than private application APIs.
+
 ## Requirements
 
 - Bun 1.3 or newer for source development

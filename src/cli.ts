@@ -1,7 +1,9 @@
 #!/usr/bin/env bun
 
 import packageMetadata from "../package.json";
-import { getAppPaths, resolveAppHeaded, type AppId } from "./config.ts";
+import { readFile } from "node:fs/promises";
+import { compileRaw, runRaw } from "./raw.ts";
+import { getAppPaths, NOTEBOOK_HOME_URL, resolveAppHeaded, type AppId } from "./config.ts";
 import { CliError } from "./errors.ts";
 import { AccountRegistry, getProfileCredentialStore } from "./registry.ts";
 import {
@@ -20,6 +22,7 @@ import {
   uploadNotebookFiles,
 } from "./apps/gnb/service.ts";
 import {
+  X_HOME_URL,
   login as loginX,
   loginWithSystemBrowser as loginXWithSystemBrowser,
   readFeed,
@@ -27,6 +30,7 @@ import {
   resolveProfileUrl,
 } from "./apps/x/service.ts";
 import {
+  REDDIT_HOME_URL,
   login as loginReddit,
   loginWithSystemBrowser as loginRedditWithSystemBrowser,
   readFeed as readRedditFeed,
@@ -183,6 +187,7 @@ function usage(): string {
   return `agent-browser-app ${VERSION}
 
 Usage:
+  agent-browser-app <gnb|x|reddit> raw [<code> | --file <script.js>] [--account <id>] [--url <url>] [--timeout <seconds>] [--headed | --headless] [--json]
   agent-browser-app gnb auth login [--account <email>] [--timeout <seconds>] [--system-browser]
   agent-browser-app gnb auth list [--json]
   agent-browser-app gnb auth switch <email-or-id>
@@ -207,6 +212,12 @@ Usage:
   agent-browser-app reddit feed [--limit <count>] [--account <username-or-id>] [--headed | --headless] [--json]
   agent-browser-app reddit profile <url-or-username> [--account <username-or-id>] [--headed | --headless] [--json]
 
+Raw Playwright:
+  Run trusted JavaScript with page and context in the selected account's profile.
+  Use await for actions and return for output. Scripts are not sandboxed.
+  --file reads an async function body, not a module. Script console output goes to stderr.
+  --url overrides the app home page. --timeout defaults to 60 seconds for async script execution.
+
 Browser configuration:
   App config: $AGENT_BROWSER_HOME/apps/agent-browser-app/<gnb|x|reddit>/config.json
   Setting: {"headed": true|false}; defaults: Reddit headed, X and NotebookLM headless.
@@ -220,6 +231,62 @@ Application aliases:
   Gemini Notebook: gnb, gemini-notebook, notebooklm
   X: x, twitter
   Reddit: reddit`;
+}
+
+async function handleRaw(
+  registry: AccountRegistry,
+  appId: AppId,
+  homeUrl: string,
+  args: string[],
+): Promise<void> {
+  const options = parseOptions(args);
+  assertAllowedOptions(options, new Set(["account", "file", "url", "timeout", "headed", "headless", "json"]));
+  for (const name of ["account", "file", "url", "timeout"]) {
+    if (stringOptions(options, name).length > 1) {
+      throw new CliError(`Option --${name} may only be supplied once.`, 2);
+    }
+    if (options.values.has(name) && !stringOption(options, name)?.trim()) {
+      throw new CliError(`Option --${name} requires a non-empty value.`, 2);
+    }
+  }
+  for (const name of ["headed", "headless", "json"]) {
+    if (options.values.has(name) && !hasFlag(options, name)) {
+      throw new CliError(`Option --${name} does not accept a value.`, 2);
+    }
+  }
+  const file = stringOption(options, "file");
+  if (options.positionals.length > 1 || (file !== undefined ? options.positionals.length !== 0 : options.positionals.length !== 1)) {
+    throw new CliError("raw requires exactly one quoted code argument or --file <script.js>.", 2);
+  }
+  const timeoutSeconds = numberOption(options, "timeout", 60);
+  if (timeoutSeconds * 1000 > 2_147_483_647) {
+    throw new CliError("Option --timeout is too large.", 2);
+  }
+  const headed = await appHeaded(appId, options);
+  const url = stringOption(options, "url") ?? homeUrl;
+  try {
+    if (!["http:", "https:"].includes(new URL(url).protocol)) throw new Error();
+  } catch {
+    throw new CliError("Option --url must be an absolute HTTP or HTTPS URL.", 2);
+  }
+  let source = options.positionals[0] ?? "";
+  if (file !== undefined) {
+    try {
+      source = await readFile(file, "utf8");
+    } catch {
+      throw new CliError("Could not read the raw script file.", 2);
+    }
+  }
+  const operation = compileRaw(source);
+  const account = await registry.resolve(stringOption(options, "account"));
+  const result = await runRaw(account, appId, url, operation, headed, timeoutSeconds * 1000);
+  try {
+    if (hasFlag(options, "json")) printJson({ result: result ?? null });
+    else if (typeof result === "string") console.log(result);
+    else if (result !== undefined) printJson(result);
+  } catch {
+    throw new CliError("Raw result is not JSON-serializable. Return a plain JSON value.");
+  }
 }
 
 async function handleGnbAuth(
@@ -1093,6 +1160,10 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
       },
     );
     const command = args[1];
+    if (command === "raw") {
+      await handleRaw(registry, "reddit", REDDIT_HOME_URL, args.slice(2));
+      return;
+    }
     if (command === "auth") {
       await handleRedditAuth(registry, args.slice(2));
       return;
@@ -1121,6 +1192,10 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
       },
     );
     const command = args[1];
+    if (command === "raw") {
+      await handleRaw(registry, "x", X_HOME_URL, args.slice(2));
+      return;
+    }
     if (command === "auth") {
       await handleXAuth(registry, args.slice(2));
       return;
@@ -1138,6 +1213,10 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
 
   const registry = new AccountRegistry(getAppPaths());
   const group = args[1];
+  if (group === "raw") {
+    await handleRaw(registry, "gnb", NOTEBOOK_HOME_URL, args.slice(2));
+    return;
+  }
   if (group === "auth") {
     await handleGnbAuth(registry, args.slice(2));
     return;

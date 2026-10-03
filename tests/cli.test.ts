@@ -136,6 +136,60 @@ describe("agent-browser-app CLI with legacy test adapter", () => {
     });
   });
 
+  test("runs raw code for every application and alias with selected profiles", async () => {
+    const home = await createHome();
+    for (const app of ["gnb", "x", "reddit"]) {
+      const login = await runCli([app, "auth", "login", "--timeout", "2", ...(app === "reddit" ? ["--playwright"] : [])], home);
+      expect(login.exitCode).toBe(0);
+    }
+    for (const app of ["gnb", "gemini-notebook", "notebooklm", "x", "twitter", "reddit"]) {
+      const result = await runCli([app, "raw", 'console.log("script diagnostic"); return { url: page.url(), tabs: context.pages().length };', "--json", "--headless"], home);
+      expect(result.exitCode).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual({ result: { url: app === "reddit" ? "https://www.reddit.com/" : ["x", "twitter"].includes(app) ? "https://x.com/home" : "https://notebooklm.google.com/", tabs: 1 } });
+      expect(result.stderr).toContain("script diagnostic");
+    }
+    const script = join(home, "raw.js");
+    await writeFile(script, "return page.url();");
+    const fromFile = await runCli(["x", "raw", "--file", script, "--url", "https://x.com/settings", "--headed"], home);
+    expect(fromFile.exitCode).toBe(0);
+    expect(fromFile.stdout.trim()).toBe("https://x.com/settings");
+    const noResult = await runCli(["x", "raw", "await Promise.resolve();", "--json"], home);
+    expect(JSON.parse(noResult.stdout)).toEqual({ result: null });
+    const failed = await runCli(["x", "raw", 'throw new Error("private-error-marker");', "--json"], home);
+    expect(failed.exitCode).toBe(1);
+    expect(failed.stdout).toBe("");
+    expect(failed.stderr).toContain("Raw Playwright code failed");
+    expect(failed.stderr).not.toContain("private-error-marker");
+    const invalidResult = await runCli(["x", "raw", "return 1n;", "--json"], home);
+    expect(invalidResult.exitCode).toBe(1);
+    expect(invalidResult.stderr).toContain("not JSON-serializable");
+  }, 30_000);
+
+  test("validates raw arguments before opening a browser", async () => {
+    const home = await createHome();
+    for (const args of [
+      [], ["return 1;", "extra"], ["return 1;", "--file", "script.js"],
+      ["--file", "missing.js"], [""], ["return (;"],
+      ["return 1;", "--timeout", "0"], ["return 1;", "--timeout", "Infinity"],
+      ["return 1;", "--timeout="], ["return 1;", "--json=false"],
+      ["return 1;", "--timeout", "3000000"], ["return 1;", "--headed", "--headless"],
+      ["return 1;", "--url", "file:///tmp/test"], ["return 1;", "--unknown", "value"],
+      ["return 1;", "--file", "one.js", "--file", "two.js"],
+    ]) {
+      const result = await runCli(["x", "raw", ...args], home);
+      expect(result.exitCode).toBe(2);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain("Error:");
+    }
+    const noAccount = await runCli(["x", "raw", "return page.url();"], home);
+    expect(noAccount.exitCode).toBe(1);
+    expect(noAccount.stderr).toContain("x auth login");
+    const help = await runCli(["reddit", "raw", "--help"], home);
+    expect(help.exitCode).toBe(0);
+    expect(help.stdout).toContain("raw [<code> | --file <script.js>]");
+    expect(help.stdout).toContain("not sandboxed");
+  }, 15_000);
+
   test("runs the authenticated X command flow", async () => {
     const home = await createHome();
 

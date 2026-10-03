@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { chromium, type Browser, type BrowserContext, type Frame, type Page } from "playwright";
 import { CliError } from "../errors.ts";
 import { getProfileCredentialStore, type Account } from "../registry.ts";
-import type { BrowserSession, BrowserTab } from "./types.ts";
+import type { BrowserSession, BrowserTab, PlaywrightOperation } from "./types.ts";
 import { connectLocalChromeTransport } from "./transport.ts";
 
 const ACTION_TIMEOUT = 30_000;
@@ -231,6 +231,25 @@ export class PlaywrightBrowser implements BrowserSession {
       }
       await chooser.setFiles(filePaths);
     });
+  }
+
+  async runPlaywright<T>(operation: PlaywrightOperation<T>, timeoutMs: number): Promise<T> {
+    const context = this.requireContext();
+    context.setDefaultTimeout(timeoutMs);
+    context.setDefaultNavigationTimeout(timeoutMs);
+    try {
+      return await this.perform("running raw Playwright code", async () => {
+        try {
+          return await operation(this.requirePage(), context);
+        } catch {
+          // Raw exceptions may contain credentials, source code, or private URLs.
+          throw new CliError("Raw Playwright code failed. Check your script and selectors.");
+        }
+      }, timeoutMs);
+    } finally {
+      context.setDefaultTimeout(ACTION_TIMEOUT);
+      context.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT);
+    }
   }
 
   async saveState(): Promise<void> {
