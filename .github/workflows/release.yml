@@ -40,10 +40,23 @@ jobs:
       - name: Install test browser
         run: bunx playwright install --with-deps chromium
 
+      - name: Allow the test browser to create sandbox namespaces
+        shell: bash
+        run: |
+          browser_path="$(bun -e 'console.log(require("playwright").chromium.executablePath())')"
+          sudo tee /etc/apparmor.d/playwright-test-chromium >/dev/null <<EOF
+          abi <abi/4.0>,
+          include <tunables/global>
+          profile playwright-test-chromium "$browser_path" flags=(unconfined) {
+            userns,
+          }
+          EOF
+          sudo apparmor_parser -r /etc/apparmor.d/playwright-test-chromium
+
       - name: Run checks
         env:
           AGENT_BROWSER_APP_BROWSER_CHANNEL: chromium
-        run: bun run verify
+        run: bun run check && bun test --timeout 15000
 
       - name: Determine release metadata
         id: metadata
