@@ -444,11 +444,33 @@ describe("agent-browser-app CLI with legacy test adapter", () => {
     expect(redditPageInvocations.filter((invocation) => {
       const headedIndex = invocation.indexOf("--headed");
       return headedIndex >= 0 && invocation[headedIndex + 1] === "true";
-    })).toHaveLength(2);
+    })).toHaveLength(6);
     expect(redditPageInvocations.filter((invocation) => {
       const headedIndex = invocation.indexOf("--headed");
       return headedIndex >= 0 && invocation[headedIndex + 1] === "false";
-    })).toHaveLength(5);
+    })).toHaveLength(1);
+
+    await writeFile(
+      join(home, "apps/agent-browser-app/reddit/config.json"),
+      JSON.stringify({ headed: false }),
+    );
+    for (const args of [
+      ["reddit", "feed", "--limit", "1", "--json"],
+      ["reddit", "profile", "u/spez", "--json"],
+      ["reddit", "feed", "--limit", "1", "--headed", "--json"],
+    ]) {
+      expect((await runCli(args, home)).exitCode).toBe(0);
+    }
+    const configuredOpens = (await readFile(join(home, "fake-invocations.jsonl"), "utf8"))
+      .trim().split("\n").map((line) => JSON.parse(line) as string[])
+      .filter((invocation) =>
+        invocation.includes("https://www.reddit.com/") ||
+        invocation.includes("https://www.reddit.com/user/spez/"),
+      )
+      .slice(-3);
+    expect(configuredOpens.map((invocation) =>
+      invocation[invocation.indexOf("--headed") + 1],
+    )).toEqual(["false", "false", "true"]);
   }, 20_000);
 
   test("validates Reddit command arguments and options", async () => {

@@ -112,6 +112,39 @@ aba --version
 The examples below use `aba`.
 Replace it with `agent-browser-app` if you prefer the full name.
 
+## Per-app browser configuration
+
+Application commands use these defaults:
+
+| App | Default |
+| --- | --- |
+| NotebookLM (`gnb`) | Headless |
+| X (`x`) | Headless |
+| Reddit (`reddit`) | Headed |
+
+Each app reads its own optional `config.json` under `AGENT_BROWSER_HOME`.
+With the default home, the paths are:
+
+```text
+~/.agent-browser/apps/agent-browser-app/gnb/config.json
+~/.agent-browser/apps/agent-browser-app/x/config.json
+~/.agent-browser/apps/agent-browser-app/reddit/config.json
+```
+
+Create the desired file with a boolean `headed` setting:
+
+```json
+{"headed": false}
+```
+
+Set `headed` to `true` for a visible browser.
+A missing file or an empty object uses the app's default.
+Invalid JSON, unknown settings, and non-boolean values report an error without opening a browser.
+Every application command accepts `--headed` and `--headless` to override the file.
+Passing both flags is an error.
+Login commands remain visible and do not use this setting.
+Commands never automatically switch browser modes when blocked.
+
 ## Authenticate
 
 Start a headed Chrome session and complete Google sign-in:
@@ -265,7 +298,8 @@ Use `--json` for machine-readable output.
 Login runs in headed mode because Google may require manual account selection, passkeys, or two-factor authentication.
 Pass `--system-browser` to use native system Chrome login when Google rejects the Playwright-controlled window.
 Both login flows use the account's isolated profile, not your regular Chrome profile.
-Notebook commands reopen that persistent profile through Playwright and run headless unless you pass `--headed`.
+Notebook commands reopen that persistent profile through Playwright and run headless by default.
+Use the app's `config.json` or an explicit `--headed` or `--headless` flag to choose the browser mode.
 A populated profile supplies authentication directly.
 Only a fresh profile imports `state.json` before navigation.
 Only `auth login` writes `state.json`, but normal browser operations can update the persistent profile.
@@ -392,10 +426,9 @@ agent-browser-app reddit feed --limit 10
 agent-browser-app reddit feed --limit 10 --json
 ```
 
-Reddit `feed` and `profile` commands run headless by default, like X and NotebookLM commands.
-Use `--headed` to inspect the browser or handle Reddit browser-verification challenges.
-The explicit `--headless` option remains accepted for compatibility.
-Commands never automatically open a visible browser when headless browsing is blocked.
+Reddit `feed` and `profile` commands run headed by default because Reddit can challenge headless browsers even with valid authentication.
+Set `headed` to `false` in Reddit's `config.json`, or pass `--headless`, to run without a visible browser.
+Use `--headed` to override a headless configuration.
 The default feed limit is 20.
 The adapter accumulates posts while scrolling the browser-rendered home feed and stops at the requested limit or when no additional posts load.
 Post output includes the post ID and URL, subreddit, author, title and text, creation time, outbound content URL, score, comment count, and content labels when Reddit exposes them.

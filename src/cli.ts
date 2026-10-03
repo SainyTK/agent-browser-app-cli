@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 import packageMetadata from "../package.json";
-import { getAppPaths } from "./config.ts";
+import { getAppPaths, resolveAppHeaded, type AppId } from "./config.ts";
 import { CliError } from "./errors.ts";
 import { AccountRegistry, getProfileCredentialStore } from "./registry.ts";
 import {
@@ -168,6 +168,13 @@ function assertAllowedOptions(
   }
 }
 
+function appHeaded(appId: AppId, options: ParsedOptions): Promise<boolean> {
+  return resolveAppHeaded(appId, {
+    headed: hasFlag(options, "headed"),
+    headless: hasFlag(options, "headless"),
+  });
+}
+
 function printJson(value: unknown): void {
   console.log(JSON.stringify(value, null, 2));
 }
@@ -193,12 +200,18 @@ Usage:
   agent-browser-app gnb notebook source remove <source-id...> --id <id-or-url> [--account <email-or-id>] [--headed] [--json]
   agent-browser-app x auth login [--account <handle>] [--timeout <seconds>] [--system-browser]
   agent-browser-app x auth list [--json]
-  agent-browser-app x feed [--limit <count>] [--account <handle-or-id>] [--headed] [--json]
-  agent-browser-app x profile <url-or-id> [--account <handle-or-id>] [--headed] [--json]
+  agent-browser-app x feed [--limit <count>] [--account <handle-or-id>] [--headed | --headless] [--json]
+  agent-browser-app x profile <url-or-id> [--account <handle-or-id>] [--headed | --headless] [--json]
   agent-browser-app reddit auth login [--timeout <seconds>] [--playwright]
   agent-browser-app reddit auth list [--json]
   agent-browser-app reddit feed [--limit <count>] [--account <username-or-id>] [--headed | --headless] [--json]
   agent-browser-app reddit profile <url-or-username> [--account <username-or-id>] [--headed | --headless] [--json]
+
+Browser configuration:
+  App config: $AGENT_BROWSER_HOME/apps/agent-browser-app/<gnb|x|reddit>/config.json
+  Setting: {"headed": true|false}; defaults: Reddit headed, X and NotebookLM headless.
+  All application commands accept --headed or --headless to override config.
+  Login remains visible.
 
 Executable aliases:
   agent-browser-app, aba
@@ -406,14 +419,14 @@ async function handleXFeed(
   const options = parseOptions(args);
   assertAllowedOptions(
     options,
-    new Set(["account", "headed", "json", "limit"]),
+    new Set(["account", "headed", "headless", "json", "limit"]),
   );
   if (options.positionals.length > 0) {
     throw new CliError("x feed does not accept positional arguments.", 2);
   }
   const limit = positiveIntegerOption(options, "limit", 20);
   const account = await registry.resolve(stringOption(options, "account"));
-  const tweets = await readFeed(account, limit, hasFlag(options, "headed"));
+  const tweets = await readFeed(account, limit, await appHeaded("x", options));
   if (hasFlag(options, "json")) {
     printJson({
       account: account.identity
@@ -440,7 +453,7 @@ async function handleXProfile(
   args: string[],
 ): Promise<void> {
   const options = parseOptions(args);
-  assertAllowedOptions(options, new Set(["account", "headed", "json"]));
+  assertAllowedOptions(options, new Set(["account", "headed", "headless", "json"]));
   const target = options.positionals[0];
   if (!target) {
     throw new CliError(
@@ -459,7 +472,7 @@ async function handleXProfile(
   const profile = await readProfile(
     account,
     target,
-    hasFlag(options, "headed"),
+    await appHeaded("x", options),
   );
   if (hasFlag(options, "json")) {
     printJson(profile);
@@ -661,7 +674,7 @@ async function handleRedditFeed(
   const posts = await readRedditFeed(
     account,
     limit,
-    hasFlag(options, "headed"),
+    await appHeaded("reddit", options),
   );
   if (hasFlag(options, "json")) {
     printJson({
@@ -717,7 +730,7 @@ async function handleRedditProfile(
   const profile = await readRedditProfile(
     account,
     target,
-    hasFlag(options, "headed"),
+    await appHeaded("reddit", options),
   );
   if (hasFlag(options, "json")) {
     printJson(profile);
@@ -757,7 +770,7 @@ async function handleNotebook(
   const command = args[0];
   const options = parseOptions(args.slice(1));
   const account = await registry.resolve(stringOption(options, "account"));
-  const headed = hasFlag(options, "headed");
+  const headed = await appHeaded("gnb", options);
   const json = hasFlag(options, "json");
 
   if (command === "list") {
@@ -837,7 +850,7 @@ async function handleNotebook(
   if (command === "ask" || command === "query") {
     assertAllowedOptions(
       options,
-      new Set(["account", "headed", "id", "json", "source", "timeout", "url"]),
+      new Set(["account", "headed", "headless", "id", "json", "source", "timeout", "url"]),
     );
     const question = options.positionals[0];
     const target =
