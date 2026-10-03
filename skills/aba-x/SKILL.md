@@ -49,7 +49,8 @@ Use a known handle to add or refresh a specific account:
 aba x auth login --account "@username"
 ```
 
-Login opens a visible browser and waits for the authenticated X home feed.
+Login opens a visible browser and detects authenticated X account navigation across its tabs.
+A remaining sign-in popup or a route other than `/home` does not prevent detection.
 Allow the command to continue until it confirms that authentication was saved.
 If Google rejects sign-in from software-controlled Chrome, retry with the isolated system-browser flow:
 
@@ -117,7 +118,8 @@ Do not inspect stored authentication data.
 
 Use only commands shown by `aba --help`.
 This adapter currently reads the home feed and profiles.
-Live X verification after the Playwright migration is pending.
+Live native X login, feed, and profile checks passed after the Playwright migration.
+See the repository's [verification report](../../docs/playwright-migration-verification.md) for commands, results, and coverage limits.
 Do not describe these workflows as live-verified.
 If the user requests posting, liking, replying, following, direct messaging, search, or another unsupported X action, confirm that it is absent from current help, state the limitation plainly, and offer the closest supported read operation.
 

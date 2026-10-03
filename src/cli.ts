@@ -3,7 +3,7 @@
 import packageMetadata from "../package.json";
 import { getAppPaths } from "./config.ts";
 import { CliError } from "./errors.ts";
-import { AccountRegistry } from "./registry.ts";
+import { AccountRegistry, getProfileCredentialStore } from "./registry.ts";
 import {
   addDriveSource,
   addTextSource,
@@ -242,7 +242,11 @@ async function handleGnbAuth(
           );
         });
     const saved = await registry.saveAuthenticated(
-      { ...account, useSystemBrowser: systemBrowser || undefined },
+      {
+        ...account,
+        useSystemBrowser: systemBrowser || undefined,
+        credentialStore: systemBrowser ? "native" : getProfileCredentialStore(account),
+      },
       detectedEmail,
     );
     console.log(`Authentication saved for ${saved.email || saved.id}.`);
@@ -322,7 +326,7 @@ async function handleXAuth(
     const detectedUsername = systemBrowser
       ? await loginXWithSystemBrowser(account, timeoutSeconds, () => {
           console.log(
-            "Complete X sign-in in the isolated Chrome window and wait for the X home feed. This command will capture the login and close the isolated browser automatically.",
+            "Complete X sign-in in the isolated Chrome window. The command detects authenticated account navigation even if a sign-in popup remains open. This command will capture the login and close the isolated browser automatically.",
           );
         })
       : await loginX(account, timeoutSeconds, () => {
@@ -331,7 +335,7 @@ async function handleXAuth(
           );
         });
     const saved = await registry.saveAuthenticated(
-      account,
+      { ...account, credentialStore: systemBrowser ? "native" : getProfileCredentialStore(account) },
       detectedUsername,
     );
     console.log(
@@ -545,7 +549,7 @@ async function handleRedditAuth(
           );
         });
     const saved = await registry.saveDiscoveredAuthenticated(
-      account,
+      { ...account, credentialStore: systemBrowser ? "native" : getProfileCredentialStore(account) },
       detectedUsername,
     );
     console.log(

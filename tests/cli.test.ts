@@ -672,6 +672,25 @@ describe("agent-browser-app CLI with legacy test adapter", () => {
     ).toBe(true);
   });
 
+  test("detects a signed-in X tab away from home while a login popup remains open", async () => {
+    const home = await createHome();
+    const result = await runCli(["x", "auth", "login", "--system-browser", "--timeout", "2"], home, {
+      AGENT_BROWSER_APP_SYSTEM_BROWSER_BIN: fakeSystemBrowser,
+      FAKE_SYSTEM_BROWSER_LOG: join(home, "fake-system-browser.jsonl"),
+      FAKE_SYSTEM_BROWSER_DONE: join(home, "fake-system-browser.done"),
+      FAKE_X_LOGIN_OVERLAY: "true",
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(result.stdout).toContain("Authentication saved for @fixture_user.");
+    const invocations = (await readFile(join(home, "fake-invocations.jsonl"), "utf8")).trim().split("\n").map((line) => JSON.parse(line) as string[]);
+    const switches = invocations.filter((args) => args.includes("tab") && !args.includes("list")).map((args) => args[args.indexOf("tab") + 1]);
+    expect(switches).toEqual(["t-login", "t-account"]);
+    const registry = JSON.parse(await readFile(join(home, "apps/agent-browser-app/x/accounts.json"), "utf8"));
+    expect(registry.accounts[0].credentialStore).toBe("native");
+    const saves = invocations.filter((args) => args.includes("state") && args.includes("save"));
+    expect(saves).toHaveLength(1);
+  });
+
   test("bootstraps Gemini Notebook login in an isolated system browser", async () => {
     const home = await createHome();
     const systemBrowserLog = join(home, "fake-system-browser.jsonl");

@@ -9,6 +9,10 @@ Keep existing `AGENT_BROWSER_HOME` account paths, authentication profiles, and s
 Use an isolated system Chrome persistent context by default.
 Treat a populated profile as authoritative and import `state.json` only into a fresh profile before navigation.
 Retain native system Chrome login and Playwright CDP attachment through Bun's native WebSocket transport.
+Record the profile credential store when saving native authentication.
+Do not apply Playwright mock-keychain or basic-password-store overrides to native Chrome profiles.
+Preserve legacy credential-store defaults for unmarked profiles.
+Detect X authentication from account navigation across X tabs, not an exact `/home` URL.
 Reddit `--playwright` selects automated login; `--agent-browser` is its deprecated alias.
 Support `AGENT_BROWSER_APP_BROWSER_BIN` for the Playwright executable override.
 Optional managed Chromium requires `bunx playwright install chromium` and `AGENT_BROWSER_APP_BROWSER_CHANNEL=chromium`.

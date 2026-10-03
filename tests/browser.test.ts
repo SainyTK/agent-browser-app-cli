@@ -3,9 +3,10 @@ import { mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { PlaywrightBrowser } from "../src/browser/playwright.ts";
-import type { Account } from "../src/registry.ts";
+import { getProfileCredentialStore, type Account } from "../src/registry.ts";
 import { startSystemBrowser } from "../src/apps/system-browser.ts";
 import { markConfirmNotebookRemovalScript, readChatStateScript } from "../src/apps/gnb/browser-scripts.ts";
+import { readAuthStateScript as readXAuthStateScript } from "../src/apps/x/browser-scripts.ts";
 
 const homes: string[] = [];
 const sessions: PlaywrightBrowser[] = [];
@@ -119,6 +120,7 @@ describe("Playwright browser engine with real Chrome", () => {
       const tabs = await browser.listTabs();
       await browser.switchTab(tabs.find((tab) => tab.url.startsWith(baseUrl))!.tabId);
       await browser.fill("#value", "attached");
+      await browser.eval(`document.cookie = 'native-fixture=persisted; max-age=3600; path=/'`);
       await browser.saveState();
       await browser.close();
       const response = await fetch(`http://127.0.0.1:${system.cdpPort}/json/list`);
@@ -126,8 +128,19 @@ describe("Playwright browser engine with real Chrome", () => {
     } finally {
       await system.close();
     }
-    await session(value).open(baseUrl);
+    const reused = session({ ...value, credentialStore: "native" });
+    await reused.open(baseUrl);
+    expect(await reused.eval<string>("document.cookie")).toContain("native-fixture=persisted");
   }, 30_000);
+
+  test("preserves legacy credential-store defaults and honors native login metadata", async () => {
+    const value = await account();
+    expect(getProfileCredentialStore(value)).toBe("playwright");
+    expect(getProfileCredentialStore({ ...value, useSystemBrowser: true })).toBe("native");
+    expect(getProfileCredentialStore({ ...value, credentialStore: "native" })).toBe("native");
+    expect(getProfileCredentialStore({ ...value, useSystemBrowser: true, credentialStore: "playwright" })).toBe("playwright");
+    expect(() => getProfileCredentialStore({ ...value, credentialStore: "invalid" } as unknown as Account)).toThrow("credential-store metadata is invalid");
+  });
 
   test("rejects locked profiles, invalid channels, and malformed storage without exposing secrets", async () => {
     const value = await account();
@@ -140,6 +153,23 @@ describe("Playwright browser engine with real Chrome", () => {
     await writeFile(value.stateFile, "SECRET invalid JSON");
     await expect(session(value).open(baseUrl)).rejects.toThrow("Could not read authentication storage state");
   });
+
+  test("detects authenticated X navigation behind a sign-in dialog away from home", async () => {
+    const browser = session(await account());
+    await browser.open(`${baseUrl}/i/flow/login`);
+    await browser.eval(`document.body.innerHTML = '<nav aria-label="Primary" aria-hidden="true"><a data-testid="AppTabBar_Profile_Link" href="/fixture_user">Profile</a><a data-testid="AppTabBar_Home_Link" href="/home">Home</a><button data-testid="SideNav_AccountSwitcher_Button">Account</button></nav><div role="dialog">Sign in to X</div>'`);
+    const state = await browser.eval<{ authenticated: boolean; loginRequired: boolean; username: string | null }>(readXAuthStateScript);
+    expect(state).toMatchObject({ authenticated: true, loginRequired: false, username: "fixture_user" });
+  }, 30_000);
+
+  test("does not mistake guest X home content for an authenticated account", async () => {
+    const browser = session(await account());
+    await browser.open(`${baseUrl}/home`);
+    await browser.eval(`document.body.innerHTML = '<nav aria-label="Primary"><a href="/i/flow/login">Sign in</a></nav><div data-testid="primaryColumn"><article>Public post<a aria-label="Profile" href="/public_author">Author profile</a></article></div><div role="dialog">Sign in to X</div>'`);
+    expect((await browser.eval<{ authenticated: boolean }>(readXAuthStateScript)).authenticated).toBe(false);
+    await browser.eval(`document.body.innerHTML = '<button data-testid="SideNav_AccountSwitcher_Button">Account</button><a data-testid="AppTabBar_Home_Link" href="/home">Home</a>'`);
+    expect((await browser.eval<{ authenticated: boolean }>(readXAuthStateScript)).authenticated).toBe(true);
+  }, 30_000);
 
   test("reports chat loading only for visible progress controls", async () => {
     const browser = session(await account());

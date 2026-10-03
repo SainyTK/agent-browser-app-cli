@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import { chromium, type Browser, type BrowserContext, type Frame, type Page } from "playwright";
 import { CliError } from "../errors.ts";
-import type { Account } from "../registry.ts";
+import { getProfileCredentialStore, type Account } from "../registry.ts";
 import type { BrowserSession, BrowserTab } from "./types.ts";
 import { connectLocalChromeTransport } from "./transport.ts";
 
@@ -71,6 +71,7 @@ export class PlaywrightBrowser implements BrowserSession {
   }
 
   private async launch(headed: boolean): Promise<void> {
+    const credentialStore = getProfileCredentialStore(this.account);
     const channel = this.environment.AGENT_BROWSER_APP_BROWSER_CHANNEL?.trim() || "chrome";
     if (channel !== "chrome" && channel !== "chromium") {
       throw new CliError("AGENT_BROWSER_APP_BROWSER_CHANNEL must be chrome or chromium.", 2);
@@ -105,6 +106,11 @@ export class PlaywrightBrowser implements BrowserSession {
         channel: executablePath ? undefined : channel,
         executablePath,
         headless: !headed,
+        // Native Chrome login cookies use its OS credential store.
+        // Keep legacy Playwright profiles on their existing mock/basic store.
+        ignoreDefaultArgs: credentialStore === "native"
+          ? ["--use-mock-keychain", "--password-store=basic"]
+          : undefined,
         timeout: NAVIGATION_TIMEOUT,
         viewport: null,
       });

@@ -21,6 +21,15 @@ export interface Account {
   updatedAt: string;
   lastAuthenticatedAt?: string;
   useSystemBrowser?: boolean;
+  credentialStore?: "native" | "playwright";
+}
+
+export function getProfileCredentialStore(account: Account): "native" | "playwright" {
+  const store = account.credentialStore ?? (account.useSystemBrowser ? "native" : "playwright");
+  if (store !== "native" && store !== "playwright") {
+    throw new CliError("The account's browser credential-store metadata is invalid. Refresh authentication with auth login.");
+  }
+  return store;
 }
 
 interface RegistryFile {

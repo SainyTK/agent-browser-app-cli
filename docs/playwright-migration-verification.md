@@ -1,8 +1,10 @@
 # Playwright migration verification
 
-Verified on macOS ARM64 with Bun 1.3.12, Playwright 1.63.0, and installed Google Chrome on 2026-10-01.
+Initial migration checks ran on macOS ARM64 with Bun 1.3.12, Playwright 1.63.0, and installed Google Chrome on 2026-10-01.
+The X authentication and native-cookie follow-up ran on 2026-10-03.
 All real CLI commands used this checkout's `src/cli.ts` and a worktree-specific `AGENT_BROWSER_HOME`.
-Live checks used private temporary copies of the saved account profiles and storage-state files.
+NotebookLM and Reddit live checks used private temporary copies of the saved account profiles and storage-state files.
+The user completed X sign-in in a separate private test home.
 The original account directories were not edited.
 Only counts, booleans, exit codes, and controlled fixture results were recorded.
 No credentials, account identities, notebook contents, or storage-state values are included here.
@@ -16,7 +18,7 @@ AGENT_BROWSER_APP_BROWSER_CHANNEL=chromium bun test tests/release-packaging.test
 ```
 
 Type checking passed.
-The integrated suite passed with 32 tests, no failures, and 312 assertions after the final Drive readiness change.
+The integrated suite passed with 36 tests, no failures, and 326 assertions after the X popup and native-cookie fixes.
 Focused chat and Drive hydration regression tests also passed.
 The compiled-release smoke test passed with system Chrome and managed Chromium.
 It installs an archive, resolves aliases outside the repository, rejects missing or mismatched runtime packages, and checks browser interaction, state saving, CDP attachment, and disconnect ownership.
@@ -48,6 +50,9 @@ Every successful JSON command exited with code 0 and returned valid JSON.
 | `bun src/cli.ts reddit auth list --json` | One cloned account was available. |
 | `bun src/cli.ts reddit feed --limit 3 --json` | Three posts were returned. |
 | `bun src/cli.ts reddit profile <own-username> --json` | The profile was readable. |
+| `bun src/cli.ts x auth login --system-browser --timeout 30` | The corrected workflow detected the authenticated UI, captured state, and closed its isolated Chrome instance. |
+| `bun src/cli.ts x feed --limit 3 --json` | Three posts were returned after native login and profile reuse. |
+| `bun src/cli.ts x profile <own-username> --json` | The profile was readable after native login and profile reuse. |
 
 Temporary notebooks from the initial diagnostic run and the final workflow run were removed.
 The notebook count returned to the original ten after the first cleanup.
@@ -76,12 +81,27 @@ Playwright still owns the CDP protocol and browser operations.
 Real local Chrome tests and compiled-release tests verify attachment and disconnect.
 The system-browser launcher requests graceful Chrome shutdown before its process fallback so the owned profile lock is released.
 
-## Authentication limits
+## X follow-up
 
-No X account registry was present in the default application directory.
-An isolated `x auth login --system-browser --timeout 600` window was opened, but sign-in did not complete.
-Live X feed and profile checks remain unverified.
-They require the user to complete login.
+The earlier X login attempts timed out because the workflow required a tab at exactly `/home`.
+The user was already signed in on another X route with a remaining sign-in popup.
+Live inspection found a profile link, account-switcher control, home navigation, and rendered posts.
+The workflow now attaches before waiting, inspects every X tab, and accepts authenticated account navigation rather than a particular URL.
+It retries transient inspection failures caused by redirects or closing popups.
+Public posts or a guest primary column alone no longer count as authentication.
+Local browser and CLI regression tests cover an authenticated page behind a dialog and a separate unauthenticated login tab.
+
+The next live feed and profile commands exposed a native Chrome cookie-store mismatch.
+A local regression reproduced a cookie saved through native Chrome disappearing when Playwright reopened the same profile with its default mock keychain.
+Native login now records `credentialStore: "native"` in the account metadata.
+Playwright omits its mock-keychain and basic-password-store overrides for those profiles.
+Existing unmarked profiles keep the legacy behavior, and legacy `useSystemBrowser` profiles retain native-store compatibility.
+The native-cookie regression passes with both system Chrome and managed Chromium.
+The private X test profile was recovered from its captured state without another user sign-in.
+Its credential-store metadata was then verified through the real CLI.
+A subsequent native login followed by headless feed and profile commands passed as a complete round trip.
+
+## Authentication coverage
 
 Reddit's saved legacy storage-state file also worked when imported into a fresh profile, returning a live feed with exit code 0.
 NotebookLM's old storage-state snapshot alone produced an expired-authentication error, although its copied persistent profile passed the live application checks.
@@ -89,8 +109,12 @@ This confirms why a populated profile must not be overwritten by an older snapsh
 A native system Chrome authentication-recapture attempt with the copied NotebookLM profile did not reach a ready home page within the login timeout.
 Fresh native NotebookLM authentication still requires user-controlled sign-in.
 Synthetic local tests verify Playwright state import and export independently of live session expiration.
+A 2026-10-03 recheck of newly copied NotebookLM authentication reported an expired session, so further live NotebookLM checks need refreshed Google authentication.
+The previously completed NotebookLM workflow results above were recorded on 2026-10-01.
+Reddit feed and profile checks passed again on 2026-10-03 with copied legacy profiles.
+The isolated X test home is retained at `/tmp/aba-playwright-x-live-check` for repeat checks and is private.
 
-To complete the missing X checks in an isolated test home:
+To repeat the X checks in an isolated test home:
 
 ```bash
 export AGENT_BROWSER_HOME="/path/to/private-test-home"
@@ -101,6 +125,6 @@ bun ./src/cli.ts x profile OpenAI --json
 ```
 
 Complete sign-in in the isolated Chrome window.
-The login command should detect the authenticated profile, save its state, and close the window.
+The login command should detect authenticated account navigation even if a sign-in dialog remains open, save its state, and close its isolated browser.
 The subsequent commands should exit with code 0 and produce valid JSON.
 Do not include the account registry or storage-state file contents in shared logs.

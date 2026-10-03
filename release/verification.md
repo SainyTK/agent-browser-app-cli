@@ -48,6 +48,6 @@ The executable and its runtime are also retained in that directory.
 
 The original isolated packaging branch had twelve failures in the then-unmigrated CLI fixtures.
 The CLI fixture migration has since been integrated.
-`bun run check && bun test` now exits 0 with 32 passes, no failures, and 312 assertions.
+`bun run check && bun test` now exits 0 with 36 passes, no failures, and 326 assertions, including X popup detection and native-cookie profile reuse.
 The compiled-release smoke also passes with managed Chromium.
 See [migration verification](../docs/playwright-migration-verification.md) for the integrated source and live application checks.

@@ -48,6 +48,8 @@ Set `AGENT_BROWSER_HOME` to change the base directory from `~/.agent-browser`.
 Playwright opens each account's isolated persistent browser context in system Chrome by default.
 A populated profile is authoritative, so an older `state.json` does not overwrite its session.
 When the profile is fresh, the CLI imports `state.json` before opening the application.
+Native Chrome login records the profile's credential store so Playwright can reuse its encrypted cookies.
+Existing unmarked profiles retain their legacy credential-store behavior.
 Treat the profile and `state.json` as secrets because they contain authenticated session material.
 
 ## Requirements
@@ -279,7 +281,8 @@ Start a headed Chrome session and complete X sign-in:
 agent-browser-app x auth login
 ```
 
-The CLI opens X's browser login flow and waits for the authenticated home feed.
+The CLI opens X's browser login flow and detects authenticated account navigation.
+An authenticated page can remain on another X route or retain a sign-in popup.
 It saves Playwright storage state to the existing `state.json` path and records the detected username when X exposes the profile navigation link.
 
 Google can reject sign-in when its OAuth page detects software-controlled Chrome.
@@ -290,7 +293,8 @@ agent-browser-app x auth login --system-browser
 ```
 
 This opens normal Google Chrome with the same isolated account profile.
-Complete X sign-in and wait for the X home feed.
+Complete X sign-in.
+The CLI checks all X tabs for authenticated account navigation, so a remaining sign-in popup does not prevent login detection.
 Playwright attaches to that authenticated Chrome instance over CDP through Bun's native WebSocket transport.
 The CLI saves `state.json` and closes the isolated browser automatically.
 
@@ -445,8 +449,8 @@ CI installs managed Chromium for these checks.
 
 Live checks used isolated copies of the user's saved accounts.
 NotebookLM and Reddit results, cleanup, and remaining coverage limits are recorded in [migration verification](docs/playwright-migration-verification.md).
-No X account was configured in the default directory, and an interactive login attempt did not complete.
-X live feed and profile verification still requires the user to sign in.
+X native login, feed, and profile checks passed after fixing route-dependent authentication detection and native credential-store compatibility.
+The tests also cover an authenticated X page with a remaining sign-in dialog and a separate login tab.
 The following commands are manual checks, not a list of completed live tests:
 
 ```bash
