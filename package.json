@@ -1,6 +1,6 @@
 {
   "name": "agent-browser-app",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "description": "Reliable authenticated application workflows powered by Playwright",
   "type": "module",
   "bin": {
