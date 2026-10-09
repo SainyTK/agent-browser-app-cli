@@ -3,7 +3,7 @@
 ## Scope
 
 This change fixes false authentication success and browser-state persistence in the local ABA source.
-It does not install a new machine-level ABA binary, transfer credentials, change VPS services, or change Slack.
+It does not install a new machine-level ABA binary, transfer credentials to the VPS, change VPS services, or change Slack.
 The independent ABA repository remains excluded from SuperU Git history.
 
 ## Reproduction
@@ -74,8 +74,36 @@ A subsequent real headless probe of that same profile reached `notebook.google.c
 This supports the reported signed-out state rather than a dashboard-selector failure in an authenticated profile.
 It does not establish whether anyone completed the interactive Google sign-in.
 
-An authenticated real notebook list, notebook read, repeated read after browser shutdown, and exported-state restoration remain unverified.
-Do not claim that NotebookLM account access or VPS credential portability works based on the fixture tests.
+### Owner-completed login follow-up
+
+The owner subsequently completed sign-in using the fixed source in another isolated private home.
+At source commit `ace10a8`, two native notebook-list commands each returned the same ten notebooks.
+Two native reads of a known notebook matched its historical title and three sources.
+Each command closed and reopened Chrome.
+A separate test registry selected the same owned profile with the native credential store and `useSystemBrowser: false`.
+Its true headless Playwright list and known-notebook read also passed.
+No canonical registry or older user profile was replaced.
+
+A successful headless raw command then captured current expanded state only after checking dashboard readiness.
+That state was copied into one fresh local profile, not an entire Chrome profile.
+The first restored headless list returned the expected ten notebooks.
+The next command, a known-notebook read after browser shutdown, exited with code 1 and required Google authentication.
+This fails the fresh-profile persistence acceptance check.
+
+Subsequent checks of the original newly authenticated profile also failed.
+Its headless list required authentication, and its native list timed out without a ready dashboard.
+These failures followed the restoration attempt, but the sequence alone does not prove that restoration caused them.
+
+A privacy-preserving cookie comparison found all 49 exported cookies still present with unchanged values in the original profile.
+None had expired, and the snapshot contained no session cookies.
+The restored profile contained 32 cookies, with 17 exported cookies absent and 30 unchanged exported values.
+No cookie values were printed.
+Thus simple disappearance or time expiry of exported cookies does not explain the original profile's failure.
+The precise Google session-rejection mechanism remains unknown.
+
+Native and headless authenticated reads were genuinely observed, but current durable authentication and real exported-state portability are not established.
+Do not claim complete NotebookLM readiness or transfer this state to the VPS.
+Stop further restoration attempts until the owner renews sign-in and the original profile passes a longer native-only repeat check without cloning its session.
 The owner must complete any required Google password, verification, or consent step.
 
 ## Complete the authenticated local check
@@ -125,6 +153,7 @@ bun src/cli.ts gnb notebook read "$NOTEBOOK_ID" --account "$NOTEBOOK_ACCOUNT" --
 
 Inspect both private outputs and verify the known notebook identity and expected source metadata.
 Do not publish the files or the browser home.
-These authenticated steps could not be completed during this verification because the Google login did not succeed.
+The owner-completed login follow-up above passed these native list/read steps and a separate true headless list/read, but later checks lost authentication.
+Treat these commands as renewal and persistence checks, not proof that the exported session is portable.
 Native accounts use native Chrome/CDP even if a command includes `--headless`.
-True headless Playwright coverage and real exported-state portability require separate checks after an authenticated session exists.
+A fresh-profile restoration is a separate acceptance check, and the real restoration follow-up failed after its first successful list.
