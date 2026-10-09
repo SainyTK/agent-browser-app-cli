@@ -24,6 +24,6 @@ Run `bun test tests/install.test.ts tests/release-packaging.test.ts` to verify p
 The test builds and installs a real archive, checks CLI help, errors, version and JSON output, and reinstalls it.
 A separate smoke executable uses the production browser implementation and the same build plugin, with the installer-deployed runtime.
 It runs through a symlink outside the repository against a local HTTP fixture and isolated Chrome profiles.
-It tests persistent-context launch, page interaction, tab listing, state saving, native WebSocket CDP attachment and disconnect without terminating Chrome.
+It tests persistent-context launch, page interaction, tab listing, state saving, session-cookie persistence after browser restart, IndexedDB restoration into a fresh profile, native WebSocket CDP attachment and disconnect without terminating Chrome.
 It also verifies that a missing sidecar fails rather than loading an ambient package.
 No live accounts are used.

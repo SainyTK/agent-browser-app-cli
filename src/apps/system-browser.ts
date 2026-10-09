@@ -60,6 +60,7 @@ function browserCommand(
 ): string[] {
   const sharedArguments = [
     "--new-window",
+    "--restore-last-session",
     `--remote-debugging-port=${cdpPort}`,
     "--remote-debugging-address=127.0.0.1",
     `--user-data-dir=${account.profileDir}`,
@@ -237,6 +238,15 @@ export async function startSystemBrowser(
           try {
             const browser = await chromium.connectOverCDP(transport, { timeout: 5_000 });
             try {
+              // This is the isolated Chrome process we own. Save one app tab,
+              // rather than accumulating a restored duplicate on each invocation.
+              const pages = browser.contexts()[0]?.pages() || [];
+              const appOrigin = new URL(loginUrl).origin;
+              const keep = [...pages].reverse().find((page) => {
+                try { return new URL(page.url()).origin === appOrigin; }
+                catch { return false; }
+              }) || pages.at(-1);
+              await Promise.all(pages.filter((page) => page !== keep).map((page) => page.close().catch(() => undefined)));
               const session = await browser.newBrowserCDPSession();
               await session.send("Browser.close").catch(() => undefined);
             } finally {

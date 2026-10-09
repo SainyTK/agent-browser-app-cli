@@ -106,6 +106,8 @@ export class PlaywrightBrowser implements BrowserSession {
         channel: executablePath ? undefined : channel,
         executablePath,
         headless: !headed,
+        // Restore Chrome's current session, not stale exported cookies, on restart.
+        args: ["--restore-last-session"],
         // Native Chrome login cookies use its OS credential store.
         // Keep legacy Playwright profiles on their existing mock/basic store.
         ignoreDefaultArgs: credentialStore === "native"
@@ -115,8 +117,13 @@ export class PlaywrightBrowser implements BrowserSession {
         viewport: null,
       });
       this.configure(context);
-      this.page = context.pages()[0] || await context.newPage();
       if (storageState) await context.setStorageState(storageState);
+      // Choose a live tab after restoration, which can create and close temporary pages.
+      const pages = context.pages().filter((page) => !page.isClosed());
+      this.page = pages.find((page) => page.url() !== "about:blank") || pages[0] || await context.newPage();
+      // Persistent commands own this isolated context. Keep one operation tab so
+      // restored tabs plus Chrome's startup tab do not accumulate on every run.
+      await Promise.all(pages.filter((page) => page !== this.page).map((page) => page.close()));
     } catch {
       await this.close();
       throw new CliError("Could not start Playwright's isolated browser or restore authentication. Check Chrome installation, profile locks, and storage state. For bundled Chromium, run bunx playwright install chromium and set AGENT_BROWSER_APP_BROWSER_CHANNEL=chromium.");
@@ -256,7 +263,7 @@ export class PlaywrightBrowser implements BrowserSession {
     await this.perform("saving authentication", async () => {
       const directory = dirname(this.account.stateFile);
       await mkdir(directory, { recursive: true, mode: 0o700 });
-      const state = await this.requireContext().storageState();
+      const state = await this.requireContext().storageState({ indexedDB: true, opfs: true });
       const temporary = `${this.account.stateFile}.${randomUUID()}.tmp`;
       try {
         await writeFile(temporary, JSON.stringify(state), { mode: 0o600 });

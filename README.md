@@ -50,7 +50,13 @@ A populated profile is authoritative, so an older `state.json` does not overwrit
 When the profile is fresh, the CLI imports `state.json` before opening the application.
 Native Chrome login records the profile's credential store so Playwright can reuse its encrypted cookies.
 Existing unmarked profiles retain their legacy credential-store behavior.
-Treat the profile and `state.json` as secrets because they contain authenticated session material.
+Chrome's session restoration preserves current session cookies across command restarts.
+ABA does not reload stale exported cookies over a populated profile, so an intentional sign-out remains authoritative.
+Each owned browser retains one operation tab rather than accumulating duplicate startup tabs.
+New state snapshots include IndexedDB and origin private file system data as well as cookies and local storage.
+Session storage and hardware-backed credentials are not exported.
+Treat the profile and `state.json` as secrets because they contain authenticated session material and may contain application data.
+A valid local session is not a guarantee that a service will accept its exported state on another device.
 
 ## Raw Playwright commands
 
@@ -201,7 +207,11 @@ Start a headed Chrome session and complete Google sign-in:
 aba gnb auth login
 ```
 
-The CLI waits for the browser to return to Gemini Notebook, saves `state.json`, and records the detected account email when the page exposes it.
+The CLI waits for a recognized, visible Gemini Notebook dashboard before saving `state.json` and recording the detected account email when the page exposes it.
+The `/trynow`, `/login`, and `/signin` landing pages are not successful authentication.
+A failed or timed-out login does not update authenticated account metadata or report success.
+Notebook listing returns an error if authentication is required or the dashboard never becomes ready.
+A genuinely authenticated empty dashboard still returns an empty notebook list.
 
 To add or refresh a specific account:
 
@@ -218,7 +228,8 @@ aba gnb auth login --account you@example.com --system-browser
 
 The CLI launches native system Chrome with an isolated account profile and waits for the Gemini Notebook home page.
 Playwright attaches over CDP through Bun's native WebSocket transport, saves the authenticated state, and lets the launcher close the isolated browser.
-Notebook commands reopen that same profile through Playwright.
+Notebook commands reuse that same isolated profile.
+Accounts marked for native browser operation keep the native Chrome/CDP path; other accounts use Playwright's persistent context.
 It does not ask for cookies, passwords, or browser-session data.
 
 List accounts and select the default account:
@@ -350,7 +361,7 @@ Notebook commands reopen that persistent profile through Playwright and run head
 Use the app's `config.json` or an explicit `--headed` or `--headless` flag to choose the browser mode.
 A populated profile supplies authentication directly.
 Only a fresh profile imports `state.json` before navigation.
-Only `auth login` writes `state.json`, but normal browser operations can update the persistent profile.
+`auth login` and successful `raw` operations write `state.json`; normal browser operations can update the persistent profile.
 
 The CLI does not print cookie values.
 It stores account metadata in `accounts.json`.

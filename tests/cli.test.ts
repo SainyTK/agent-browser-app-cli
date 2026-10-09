@@ -872,6 +872,117 @@ describe("agent-browser-app CLI with legacy test adapter", () => {
     ).toBe(false);
   });
 
+  test("does not save a NotebookLM landing page as a successful login", async () => {
+    const home = await createHome();
+    const result = await runCli(["gnb", "auth", "login", "--timeout", "0.1"], home, {
+      FAKE_GNB_URL: "https://notebook.google.com/trynow?private-marker=1",
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("Authentication did not finish");
+    expect(result.stdout).not.toContain("Authentication saved");
+    expect(result.stderr).not.toContain("private-marker");
+    const accounts = await runCli(["gnb", "auth", "list", "--json"], home);
+    expect(JSON.parse(accounts.stdout).accounts).toEqual([]);
+    const invocations = (await readFile(join(home, "fake-invocations.jsonl"), "utf8"))
+      .trim().split("\n").map((line) => JSON.parse(line) as string[]);
+    expect(invocations.some((args) => args.includes("state") && args.includes("save"))).toBe(false);
+  });
+
+  test("retries dashboard evaluation interrupted by OAuth navigation", async () => {
+    const home = await createHome();
+    const result = await runCli(["gnb", "auth", "login", "--timeout", "2"], home, {
+      FAKE_GNB_NAVIGATING: "true",
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("Authentication saved");
+  });
+
+  test("checks other native NotebookLM tabs when the first one is still loading", async () => {
+    const home = await createHome();
+    const result = await runCli(["gnb", "auth", "login", "--system-browser", "--timeout", "2"], home, {
+      AGENT_BROWSER_APP_SYSTEM_BROWSER_BIN: fakeSystemBrowser,
+      FAKE_SYSTEM_BROWSER_LOG: join(home, "fake-system-browser.jsonl"),
+      FAKE_SYSTEM_BROWSER_DONE: join(home, "fake-system-browser.done"),
+      FAKE_GNB_MULTI_TABS: "true",
+    });
+    expect(result.exitCode).toBe(0);
+    const invocations = (await readFile(join(home, "fake-invocations.jsonl"), "utf8"))
+      .trim().split("\n").map((line) => JSON.parse(line) as string[]);
+    const switches = invocations.filter((args) => args.includes("tab") && !args.includes("list"))
+      .map((args) => args[args.indexOf("tab") + 1]);
+    expect(switches).toContain("t-loading");
+    expect(switches).toContain("t-ready");
+    expect(switches).not.toContain("t-signin");
+  });
+
+  test("requires a ready dashboard before saving login even at an app URL", async () => {
+    const home = await createHome();
+    const result = await runCli(["gnb", "auth", "login", "--timeout", "0.1"], home, {
+      FAKE_GNB_READY: "false",
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).not.toContain("Authentication saved");
+    expect(JSON.parse((await runCli(["gnb", "auth", "list", "--json"], home)).stdout).accounts).toEqual([]);
+  });
+
+  test("accepts an authenticated empty NotebookLM dashboard", async () => {
+    const home = await createHome();
+    const environment = { FAKE_GNB_EMPTY: "true" };
+    const login = await runCli(["gnb", "auth", "login", "--timeout", "2"], home, environment);
+    expect(login.exitCode).toBe(0);
+    const list = await runCli(["gnb", "notebook", "list", "--json"], home, environment);
+    expect(list.exitCode).toBe(0);
+    expect(JSON.parse(list.stdout).notebooks).toEqual([]);
+    expect(list.stderr).toBe("");
+  });
+
+  test("rejects unauthenticated landing pages on list, read, and create", async () => {
+    const home = await createHome();
+    expect((await runCli(["gnb", "auth", "login", "--timeout", "2"], home)).exitCode).toBe(0);
+    const registryPath = join(home, "apps/agent-browser-app/gnb/accounts.json");
+    const before = await readFile(registryPath, "utf8");
+    for (const operation of [["list"], ["read", "abc-123"], ["create"]]) {
+      const result = await runCli(["gnb", "notebook", ...operation, "--json"], home, {
+        FAKE_GNB_URL: "https://notebook.google.com/trynow?private-marker=1",
+      });
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain("Google authentication is required");
+      expect(result.stderr).not.toContain("private-marker");
+    }
+    expect(await readFile(registryPath, "utf8")).toBe(before);
+    const failedLogin = await runCli(["gnb", "auth", "login", "--timeout", "0.1"], home, {
+      FAKE_GNB_URL: "https://notebook.google.com/trynow",
+    });
+    expect(failedLogin.exitCode).toBe(1);
+    expect(await readFile(registryPath, "utf8")).toBe(before);
+  });
+
+  test("does not return an empty list when the dashboard never finishes loading", async () => {
+    const home = await createHome();
+    expect((await runCli(["gnb", "auth", "login", "--timeout", "2"], home)).exitCode).toBe(0);
+    const result = await runCli(["gnb", "notebook", "list", "--json"], home, {
+      FAKE_GNB_READY: "false",
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("did not finish loading its dashboard");
+  }, 30_000);
+
+  test("does not accept a landing tab during native NotebookLM login", async () => {
+    const home = await createHome();
+    const result = await runCli(["gnb", "auth", "login", "--system-browser", "--timeout", "0.1"], home, {
+      AGENT_BROWSER_APP_SYSTEM_BROWSER_BIN: fakeSystemBrowser,
+      FAKE_SYSTEM_BROWSER_LOG: join(home, "fake-system-browser.jsonl"),
+      FAKE_SYSTEM_BROWSER_DONE: join(home, "fake-system-browser.done"),
+      FAKE_GNB_URL: "https://notebook.google.com/trynow",
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("did not finish loading after Google sign-in");
+    expect(result.stdout).not.toContain("Authentication saved");
+    expect(JSON.parse((await runCli(["gnb", "auth", "list", "--json"], home)).stdout).accounts).toEqual([]);
+  });
+
   test("runs the authenticated Gemini Notebook command flow", async () => {
     const home = await createHome();
 

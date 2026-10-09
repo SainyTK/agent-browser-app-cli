@@ -10,6 +10,7 @@ export class LegacyTestBrowser implements BrowserSession {
   readonly sessionName: string;
   private cdpPort?: number;
   private headed = false;
+  private navigationInterrupted = false;
 
   constructor(
     private readonly account: Account,
@@ -65,6 +66,10 @@ export class LegacyTestBrowser implements BrowserSession {
   }
 
   async eval<T>(script: string): Promise<T> {
+    if (script.includes("aba:notebook-list") && this.environment.FAKE_GNB_NAVIGATING === "true" && !this.navigationInterrupted) {
+      this.navigationInterrupted = true;
+      throw new CliError("Playwright failed while evaluating application state.");
+    }
     const encoded = Buffer.from(script).toString("base64");
     return (await this.run<{ result: T }>(["eval", "-b", encoded])).result;
   }

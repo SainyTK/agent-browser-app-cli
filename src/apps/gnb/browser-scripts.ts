@@ -1,3 +1,5 @@
+import { NOTEBOOK_HOSTS, NOTEBOOK_SIGN_IN_PATH } from "./auth.ts";
+
 export const detectAccountEmailScript = String.raw`
 /* aba:account-email */
 (() => {
@@ -24,6 +26,16 @@ export const detectAccountEmailScript = String.raw`
 export const listNotebooksScript = String.raw`
 /* aba:notebook-list */
 (() => {
+  const signInPath = new RegExp(${JSON.stringify(NOTEBOOK_SIGN_IN_PATH.source)}, ${JSON.stringify(NOTEBOOK_SIGN_IN_PATH.flags)});
+  const loginRequired = location.protocol !== 'https:' ||
+    !${JSON.stringify(NOTEBOOK_HOSTS)}.includes(location.hostname) || signInPath.test(location.pathname);
+  if (loginRequired) return { loginRequired: true, ready: false, notebooks: [] };
+  const visible = (element) => {
+    const rect = element.getBoundingClientRect();
+    const style = getComputedStyle(element);
+    return rect.width > 0 && rect.height > 0 &&
+      style.visibility !== 'hidden' && style.display !== 'none';
+  };
   const normalizeUrl = (value) => {
     if (!value) return null;
     try {
@@ -76,13 +88,11 @@ export const listNotebooksScript = String.raw`
 
 
   return {
-    loginRequired: location.hostname === "accounts.google.com",
-    ready: Boolean(
-      document.querySelector(
-        ".my-projects-container, .create-new-action-button, project-button, " +
-        'button[aria-label="Create new notebook"], tr[role="row"] [role="cell"]'
-      )
-    ),
+    loginRequired,
+    ready: Array.from(document.querySelectorAll(
+      ".my-projects-container, .create-new-action-button, project-button, " +
+      'button[aria-label="Create new notebook"], tr[role="row"] [role="cell"]'
+    )).some(visible),
     notebooks: Array.from(found.values())
   };
 })()

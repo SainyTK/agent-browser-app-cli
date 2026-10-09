@@ -66,7 +66,7 @@ async function readState(): Promise<FakeState> {
     },
   ];
   const defaults: FakeState = {
-    url: "https://notebooklm.google.com/",
+    url: process.env.FAKE_GNB_URL || "https://notebooklm.google.com/",
     responsePolls: 0,
     redditAuthPolls: 0,
     submitted: false,
@@ -135,7 +135,11 @@ if (command === "tab" && (!rest[0] || rest[0] === "list")) {
     args.some((argument) => argument.startsWith("agent-browser-app-gnb-"));
   const xOverlay = !reddit && !geminiNotebook && process.env.FAKE_X_LOGIN_OVERLAY === "true";
   output({
-    tabs: xOverlay ? [
+    tabs: geminiNotebook && process.env.FAKE_GNB_MULTI_TABS === "true" ? [
+      { active: false, label: null, tabId: "t-loading", title: "Loading", type: "page", url: "https://notebook.google.com/" },
+      { active: false, label: null, tabId: "t-signin", title: "Sign in", type: "page", url: "https://notebook.google.com/trynow" },
+      { active: true, label: null, tabId: "t-ready", title: "Gemini Notebook", type: "page", url: "https://notebook.google.com/" },
+    ] : xOverlay ? [
       { active: false, label: null, tabId: "t-login", title: "Sign in / X", type: "page", url: "https://x.com/i/flow/login" },
       { active: true, label: null, tabId: "t-account", title: "X", type: "page", url: "https://x.com/fixture_user" },
     ] : [
@@ -148,7 +152,7 @@ if (command === "tab" && (!rest[0] || rest[0] === "list")) {
         url: reddit
           ? "https://www.reddit.com/"
           : geminiNotebook
-            ? "https://notebooklm.google.com/"
+            ? (process.env.FAKE_GNB_URL || "https://notebooklm.google.com/")
             : "https://x.com/home",
       },
     ],
@@ -158,7 +162,7 @@ if (command === "tab" && (!rest[0] || rest[0] === "list")) {
   await saveState(state);
   output({ active: rest[0] });
 } else if (command === "open") {
-  state.url = rest[0] || "https://notebooklm.google.com/";
+  state.url = process.env.FAKE_GNB_URL || rest[0] || "https://notebooklm.google.com/";
   await saveState(state);
   output({ title: "Gemini Notebook", url: state.url });
 } else if (command === "get" && rest[0] === "url") {
@@ -393,11 +397,13 @@ if (command === "tab" && (!rest[0] || rest[0] === "list")) {
   } else if (script.includes("aba:account-email")) {
     output({ result: "test@example.com" });
   } else if (script.includes("aba:notebook-list")) {
+    const loginRequired = /\/(?:trynow|login|signin)(?:\/|$)/.test(new URL(state.url).pathname);
+    const ready = !loginRequired && process.env.FAKE_GNB_READY !== "false" && state.activeTab !== "t-loading";
     output({
       result: {
-        loginRequired: false,
-        ready: true,
-        notebooks: state.notebooks,
+        loginRequired,
+        ready,
+        notebooks: !ready || process.env.FAKE_GNB_EMPTY === "true" ? [] : state.notebooks,
       },
     });
   } else if (script.includes("aba:onboarding")) {

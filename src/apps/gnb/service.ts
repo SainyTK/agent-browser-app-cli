@@ -8,6 +8,7 @@ import {
 import { CliError } from "../../errors.ts";
 import type { Account } from "../../registry.ts";
 import { startSystemBrowser } from "../system-browser.ts";
+import { isNotebookAppUrl } from "./auth.ts";
 import {
   detectAccountEmailScript,
   insertDrivePickerSelectionScript,
@@ -97,22 +98,26 @@ async function waitUntil<T>(
   return latest;
 }
 
-function isNotebookHome(url: string): boolean {
+async function hasAuthenticatedDashboard(browser: BrowserSession): Promise<boolean> {
+  if (!isNotebookAppUrl(await browser.currentUrl())) return false;
   try {
-    return isNotebookHomeUrl(new URL(url));
-  } catch {
-    return false;
+    const state = await browser.eval<ListResult>(listNotebooksScript);
+    return !state.loginRequired && state.ready;
+  } catch (error) {
+    // OAuth navigation may replace the document between the URL and DOM checks.
+    if (error instanceof CliError && error.message === "Playwright failed while evaluating application state.") return false;
+    throw error;
   }
 }
 
-function isNotebookHomeUrl(url: URL): boolean {
-  return (
-    (url.hostname === "notebooklm.google.com" ||
-      url.hostname === "notebook.google.com") &&
-    !url.pathname.startsWith("/login")
-  );
+function assertDashboardReady(state: ListResult): void {
+  if (state.loginRequired) {
+    throw new CliError("Google authentication is required. Run: agent-browser-app gnb auth login");
+  }
+  if (!state.ready) {
+    throw new CliError("Gemini Notebook did not finish loading its dashboard. Retry with --headed to inspect the current interface.");
+  }
 }
-
 
 function normalizeChatText(value: string | null): string {
   return (value || "").replace(/\s+/g, " ").trim();
@@ -178,20 +183,11 @@ async function startAuthenticatedSystemBrowser(
     await browser.attach(systemBrowser.cdpPort);
     const deadline = Date.now() + timeoutSeconds * 1000;
     while (Date.now() < deadline) {
-      const notebookTab = (await browser.listTabs()).find((tab) => {
-        if (tab.type !== "page") {
-          return false;
-        }
-        try {
-          return isNotebookHomeUrl(new URL(tab.url));
-        } catch {
-          return false;
-        }
-      });
-      if (notebookTab) {
+      const notebookTabs = (await browser.listTabs()).filter((tab) =>
+        tab.type === "page" && isNotebookAppUrl(tab.url));
+      for (const notebookTab of notebookTabs) {
         await browser.switchTab(notebookTab.tabId);
-        const state = await browser.eval<ListResult>(listNotebooksScript);
-        if (state.ready || state.notebooks.length > 0) {
+        if (await hasAuthenticatedDashboard(browser)) {
           return {
             browser,
             close: async () => {
@@ -235,9 +231,9 @@ async function runAuthenticated<T>(
 }
 
 function assertAuthenticated(url: string): void {
-  if (new URL(url).hostname === "accounts.google.com") {
+  if (!isNotebookAppUrl(url)) {
     throw new CliError(
-      "Google authentication has expired. Run: agent-browser-app gnb auth login",
+      "Google authentication is required. Run: agent-browser-app gnb auth login",
     );
   }
 }
@@ -251,18 +247,21 @@ export async function login(
   try {
     await browser.open(NOTEBOOK_HOME_URL, true);
     onWaiting();
-    const url = await waitUntil(
-      () => browser.currentUrl(),
-      isNotebookHome,
+    const authenticated = await waitUntil(
+      () => hasAuthenticatedDashboard(browser),
+      Boolean,
       timeoutSeconds * 1000,
       1000,
     );
-    if (!isNotebookHome(url)) {
+    if (!authenticated) {
       throw new CliError(
         `Authentication did not finish within ${timeoutSeconds} seconds.`,
       );
     }
     await delay(1500);
+    if (!await hasAuthenticatedDashboard(browser)) {
+      throw new CliError("Google authentication was not retained after sign-in. Retry: agent-browser-app gnb auth login");
+    }
     const email =
       (await browser.eval<string | null>(detectAccountEmailScript)) || undefined;
     await browser.saveState();
@@ -283,6 +282,9 @@ export async function loginWithSystemBrowser(
     onWaiting,
   );
   try {
+    if (!await hasAuthenticatedDashboard(session.browser)) {
+      throw new CliError("Google authentication was not retained after sign-in. Retry: agent-browser-app gnb auth login");
+    }
     const email =
       (await session.browser.eval<string | null>(detectAccountEmailScript)) ||
       undefined;
@@ -310,11 +312,8 @@ export async function listNotebooks(
       (value) => value.loginRequired || value.ready || value.notebooks.length > 0,
       20_000,
     );
-    if (result.loginRequired) {
-      throw new CliError(
-        "Google authentication has expired. Run: agent-browser-app gnb auth login",
-      );
-    }
+    assertAuthenticated(await browser.currentUrl());
+    assertDashboardReady(result);
     return result.notebooks;
   });
 }
@@ -393,11 +392,8 @@ export async function removeNotebooks(
         value.loginRequired || value.ready || value.notebooks.length > 0,
       20_000,
     );
-    if (initial.loginRequired) {
-      throw new CliError(
-        "Google authentication has expired. Run: agent-browser-app gnb auth login",
-      );
-    }
+    assertAuthenticated(await browser.currentUrl());
+    assertDashboardReady(initial);
     const targets = requestedIds.map((id) => {
       const notebook = initial.notebooks.find((candidate) => candidate.id === id);
       if (!notebook) {

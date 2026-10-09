@@ -7,7 +7,7 @@ import { compileRaw, runRaw } from "../src/raw.ts";
 import { AccountRegistry, getProfileCredentialStore, type Account } from "../src/registry.ts";
 import { getAppPaths } from "../src/config.ts";
 import { startSystemBrowser } from "../src/apps/system-browser.ts";
-import { markConfirmNotebookRemovalScript, readChatStateScript } from "../src/apps/gnb/browser-scripts.ts";
+import { listNotebooksScript, markConfirmNotebookRemovalScript, readChatStateScript } from "../src/apps/gnb/browser-scripts.ts";
 import { readAuthStateScript as readXAuthStateScript } from "../src/apps/x/browser-scripts.ts";
 
 const homes: string[] = [];
@@ -139,6 +139,103 @@ describe("Playwright browser engine with real Chrome", () => {
     expect(saved.origins[0].localStorage).toEqual([{ name: "fixture", value: "newer-profile" }]);
   }, 30_000);
 
+  test("preserves session cookies without resurrecting a deliberately cleared cookie", async () => {
+    const value = await account();
+    let browser = session(value);
+    await browser.open(baseUrl);
+    await browser.eval(`document.cookie = 'session-fixture=active; path=/'`);
+    await browser.saveState();
+    await browser.close();
+    for (let restart = 0; restart < 3; restart++) {
+      browser = session(value);
+      await browser.open(baseUrl);
+      expect(await browser.eval<string>("document.cookie")).toContain("session-fixture=active");
+      expect(await browser.listTabs()).toHaveLength(1);
+      await browser.close();
+    }
+    browser = session(value);
+    await browser.open(baseUrl);
+    await browser.eval(`document.cookie = 'session-fixture=; max-age=0; path=/'`);
+    // Leave the older exported state untouched: the cleared profile must win.
+    await browser.close();
+    const signedOut = session(value);
+    await signedOut.open(baseUrl);
+    expect(await signedOut.eval<string>("document.cookie")).not.toContain("session-fixture=");
+    expect(await signedOut.listTabs()).toHaveLength(1);
+  }, 30_000);
+
+  test("exports and restores IndexedDB and OPFS into a fresh profile", async () => {
+    const original = await account();
+    const browser = session(original);
+    await browser.open(baseUrl);
+    await browser.runPlaywright(async (page) => {
+      await page.evaluate(async () => {
+        const db = await new Promise<IDBDatabase>((resolve, reject) => {
+          const request = indexedDB.open("fixture-auth", 1);
+          request.onupgradeneeded = () => request.result.createObjectStore("tokens");
+          request.onsuccess = () => resolve(request.result);
+          request.onerror = () => reject(request.error);
+        });
+        await new Promise<void>((resolve, reject) => {
+          const tx = db.transaction("tokens", "readwrite");
+          tx.objectStore("tokens").put("fixture-token", "active");
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => reject(tx.error);
+        });
+        db.close();
+        const root = await navigator.storage.getDirectory();
+        const file = await root.getFileHandle("fixture.txt", { create: true });
+        const stream = await file.createWritable();
+        await stream.write("fixture-opfs");
+        await stream.close();
+      });
+    }, 5000);
+    await browser.saveState();
+    await browser.close();
+    const imported = await account();
+    await writeFile(imported.stateFile, await readFile(original.stateFile), { mode: 0o600 });
+    for (let restart = 0; restart < 2; restart++) {
+      const restored = session(imported);
+      await restored.open(baseUrl);
+      const result = await restored.runPlaywright(async (page) => page.evaluate(async () => {
+        const db = await new Promise<IDBDatabase>((resolve, reject) => {
+          const request = indexedDB.open("fixture-auth", 1);
+          request.onsuccess = () => resolve(request.result);
+          request.onerror = () => reject(request.error);
+        });
+        const token = await new Promise((resolve, reject) => {
+          const request = db.transaction("tokens").objectStore("tokens").get("active");
+          request.onsuccess = () => resolve(request.result);
+          request.onerror = () => reject(request.error);
+        });
+        db.close();
+        const root = await navigator.storage.getDirectory();
+        const file = await (await root.getFileHandle("fixture.txt")).getFile();
+        return { token, text: await file.text() };
+      }), 5000);
+      expect(result).toEqual({ token: "fixture-token", text: "fixture-opfs" });
+      await restored.close();
+    }
+  }, 30_000);
+
+  test("recognizes a real empty dashboard but not landing or loading pages", async () => {
+    const browser = session(await account());
+    await browser.open(baseUrl);
+    await browser.runPlaywright(async (page, context) => {
+      await context.route("https://notebook.google.com/**", (route) => route.fulfill({
+        contentType: "text/html",
+        body: '<button aria-label="Create new notebook">Create notebook</button>',
+      }));
+      await page.goto("https://notebook.google.com/trynow");
+    }, 5000);
+    const dashboard = () => browser.eval<{ loginRequired: boolean; ready: boolean; notebooks: unknown[] }>(listNotebooksScript);
+    expect(await dashboard()).toEqual({ loginRequired: true, ready: false, notebooks: [] });
+    await browser.runPlaywright(async (page) => page.goto("https://notebook.google.com/"), 5000);
+    expect(await dashboard()).toEqual({ loginRequired: false, ready: true, notebooks: [] });
+    await browser.eval(`document.querySelector('button').style.display = 'none'`);
+    expect(await dashboard()).toEqual({ loginRequired: false, ready: false, notebooks: [] });
+  }, 30_000);
+
   test("uses cross-origin frames for evaluation and real keyboard input", async () => {
     const browser = session(await account());
     await browser.open(`${baseUrl}/frames`);
@@ -175,7 +272,7 @@ describe("Playwright browser engine with real Chrome", () => {
       const tabs = await browser.listTabs();
       await browser.switchTab(tabs.find((tab) => tab.url.startsWith(baseUrl))!.tabId);
       await browser.fill("#value", "attached");
-      await browser.eval(`document.cookie = 'native-fixture=persisted; max-age=3600; path=/'`);
+      await browser.eval(`document.cookie = 'native-fixture=persisted; max-age=3600; path=/'; document.cookie = 'native-session=active; path=/'`);
       await browser.saveState();
       await browser.close();
       const response = await fetch(`http://127.0.0.1:${system.cdpPort}/json/list`);
@@ -186,6 +283,7 @@ describe("Playwright browser engine with real Chrome", () => {
     const reused = session({ ...value, credentialStore: "native" });
     await reused.open(baseUrl);
     expect(await reused.eval<string>("document.cookie")).toContain("native-fixture=persisted");
+    expect(await reused.eval<string>("document.cookie")).toContain("native-session=active");
   }, 30_000);
 
   test("preserves legacy credential-store defaults and honors native login metadata", async () => {

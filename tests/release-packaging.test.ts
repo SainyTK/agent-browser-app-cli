@@ -82,7 +82,7 @@ test("compiled release installs its exact runtime and browses outside the reposi
     await symlink(installedSmoke, smokeAlias);
     const browse = await run([smokeAlias, server.url.origin, home], outside, home);
     expect(browse.code, browse.stderr).toBe(0);
-    expect(JSON.parse(browse.stdout)).toEqual({ launch: "ok", interaction: "ok", tabs: "ok", storage: "ok", connectOverCDP: "ok", disconnect: "ok" });
+    expect(JSON.parse(browse.stdout)).toEqual({ launch: "ok", interaction: "ok", tabs: "ok", storage: "ok", sessionCookies: "ok", indexedDB: "ok", connectOverCDP: "ok", disconnect: "ok" });
     console.log(`Compiled Chrome smoke: ${browse.stdout.trim()}`);
 
     await writeFile(join(installedDirectory, "agent-browser-app.runtime", "node_modules", "playwright", "package.json"), JSON.stringify({ version: "1.62.0" }));

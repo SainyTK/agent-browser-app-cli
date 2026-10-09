@@ -14,9 +14,53 @@ try {
   if (await browser.eval<string>("document.body.dataset.result") !== "compiled-release") throw new Error("Compiled page interaction failed");
   const tabs = await browser.listTabs();
   if (tabs[0]?.title !== "Release fixture") throw new Error("Compiled tab listing failed");
+  await browser.eval(`document.cookie = 'release-session=active; path=/'`);
+  await browser.runPlaywright(async (page) => page.evaluate(async () => {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open("release-auth", 1);
+      request.onupgradeneeded = () => request.result.createObjectStore("tokens");
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction("tokens", "readwrite");
+      tx.objectStore("tokens").put("fixture-token", "active");
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+  }), 5000);
   await browser.saveState();
 } finally {
   await browser.close();
+}
+const restarted = new PlaywrightBrowser(account, "fixture");
+try {
+  await restarted.open(url);
+  if (!(await restarted.eval<string>("document.cookie")).includes("release-session=active")) throw new Error("Compiled session-cookie persistence failed");
+} finally {
+  await restarted.close();
+}
+const restored = new PlaywrightBrowser({ ...account, profileDir: join(home, "restored-profile") }, "fixture");
+try {
+  await restored.open(url);
+  const token = await restored.runPlaywright(async (page) => page.evaluate(async () => {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open("release-auth", 1);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    try {
+      return await new Promise((resolve, reject) => {
+        const request = db.transaction("tokens").objectStore("tokens").get("active");
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+    } finally { db.close(); }
+  }), 5000);
+  if (token !== "fixture-token") throw new Error("Compiled IndexedDB restoration failed");
+} finally {
+  await restored.close();
 }
 
 // Verify the native WebSocket public connectOverCDP path in a compiled binary.
@@ -50,4 +94,4 @@ try {
   child.kill();
   await child.exited;
 }
-console.log(JSON.stringify({ launch: "ok", interaction: "ok", tabs: "ok", storage: "ok", connectOverCDP: "ok", disconnect: "ok" }));
+console.log(JSON.stringify({ launch: "ok", interaction: "ok", tabs: "ok", storage: "ok", sessionCookies: "ok", indexedDB: "ok", connectOverCDP: "ok", disconnect: "ok" }));
