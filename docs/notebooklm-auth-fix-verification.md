@@ -101,10 +101,27 @@ No cookie values were printed.
 Thus simple disappearance or time expiry of exported cookies does not explain the original profile's failure.
 The precise Google session-rejection mechanism remains unknown.
 
-Native and headless authenticated reads were genuinely observed, but current durable authentication and real exported-state portability are not established.
-Do not claim complete NotebookLM readiness or transfer this state to the VPS.
-Stop further restoration attempts until the owner renews sign-in and the original profile passes a longer native-only repeat check without cloning its session.
+At that checkpoint, native and headless authenticated reads were genuinely observed, but current durable authentication and real exported-state portability were not established.
+The owner subsequently renewed sign-in for the native-only control below.
+Do not claim complete NotebookLM readiness or transfer the failed restored state to the VPS.
 The owner must complete any required Google password, verification, or consent step.
+
+### Renewed native-only control
+
+The owner renewed login in the same isolated home and reported choosing "continue without profile" in Chrome.
+Using source commit `f4f392b`, the control ran only the native Chrome/CDP notebook path.
+It did not switch to headless Playwright, copy or restore the session, or export a new snapshot during the checks.
+
+At scheduled offsets of zero, 90, and 300 seconds, each notebook list and known-notebook read exited with code 0.
+All three lists returned the same ten notebook IDs from the earlier authenticated list.
+All three reads matched the historical notebook's ID, title, and three sources.
+Each command closed and reopened Chrome, for six separate command/browser launches.
+The final round finished 314.7 seconds after the control started.
+
+This verifies native-only local reads over the tested five-minute interval with the renewed profile.
+It does not establish indefinite session lifetime, show that the Chrome prompt choice caused the improvement, or resolve exported-state portability.
+Keep this profile on the native Chrome path and avoid further clone/restore experiments until the portability failure has a separately bounded diagnostic plan.
+The installed ABA, older user profiles, VPS, and Slack remain unchanged.
 
 ## Complete the authenticated local check
 
@@ -153,7 +170,8 @@ bun src/cli.ts gnb notebook read "$NOTEBOOK_ID" --account "$NOTEBOOK_ACCOUNT" --
 
 Inspect both private outputs and verify the known notebook identity and expected source metadata.
 Do not publish the files or the browser home.
-The owner-completed login follow-up above passed these native list/read steps and a separate true headless list/read, but later checks lost authentication.
-Treat these commands as renewal and persistence checks, not proof that the exported session is portable.
+The first owner-completed login passed these native list/read steps and a separate true headless list/read, but later checks lost authentication.
+The renewed native-only control above subsequently passed three list/read rounds over five minutes without cloning its session.
+Treat these commands as renewal and bounded persistence checks, not proof that the exported session is portable.
 Native accounts use native Chrome/CDP even if a command includes `--headless`.
 A fresh-profile restoration is a separate acceptance check, and the real restoration follow-up failed after its first successful list.
