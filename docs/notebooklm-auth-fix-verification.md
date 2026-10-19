@@ -175,3 +175,50 @@ The renewed native-only control above subsequently passed three list/read rounds
 Treat these commands as renewal and bounded persistence checks, not proof that the exported session is portable.
 Native accounts use native Chrome/CDP even if a command includes `--headless`.
 A fresh-profile restoration is a separate acceptance check, and the real restoration follow-up failed after its first successful list.
+
+## Release 0.4.1 live verification
+
+### Reproduction with installed 0.4.0
+
+Installed 0.4.0 listed notebooks headless for the owner's work account with exit code 0 and an empty array.
+A copy of that profile reached `notebook.google.com/trynow` both headless and headed, and Google account pages showed it signed out.
+Its Google session cookies were all created on 9 October, so the earlier revoked session was the only one stored.
+The 14 October `auth login` had written no new session cookies.
+Version 0.4.0 accepted the `/trynow` landing page as the home page, so login saved immediately before any sign-in.
+No cookie values were printed.
+
+### Changes in 0.4.1
+
+Release 0.4.1 includes the landing-page and dashboard readiness fixes above.
+`gnb auth login` uses native system Chrome by default, and `--playwright` selects the automated window.
+Notebook commands always run through Playwright on the account profile with its recorded credential store, so `--headless` no longer opens system Chrome.
+A profile lock counts as in use only when it belongs to another host or a running process.
+The source list treats a rendered `has-sources` drop zone as loaded when NotebookLM hides the cover and its source count.
+
+### Live results on 19 October 2026
+
+The release was built with `scripts/build-release.sh` and installed with `install.sh` from a local file mirror.
+Against the revoked profile, installed 0.4.1 exited with code 1 and "Google authentication is required".
+The revoked profile was moved aside, and the owner signed in once through `aba gnb auth login`.
+The registry recorded the native credential store.
+
+Installed 0.4.1 then passed these headless commands, each in its own browser launch:
+
+- Notebook list, three times, each returning the same ten notebooks.
+- Notebook read of a known notebook with one source, three times, and of an empty notebook once.
+- Source list of a healthy notebook and of a notebook whose only source had failed.
+
+A file upload of a synthetic tone reached NotebookLM, which marked the source as failed because it contained no speech.
+That run left Chrome's profile lock behind, and the next commands were refused until the lock fix above.
+The cause of that unclean exit was not isolated.
+After the lock fix, Chrome reclaimed the stale lock and later commands left no lock behind.
+Installed 0.4.1 then uploaded a real 56.9 MB, 1 hour 54 minute recording headless with exit code 0 and status `ready` after 146 seconds.
+A fresh headless source list showed it as ready, and no profile lock remained.
+Session lifetime beyond that day remains unverified.
+
+A second upload of the same recording then printed `ready` while NotebookLM still showed the new copy as processing.
+Upload matched new sources by title in list order, but NotebookLM inserts new sources at the top, so the earlier ready copy was reported.
+Upload and the add-source commands now share an order-independent title and status comparison that can only delay success or report failure when same-titled rows are ambiguous.
+Applied to the live notebook, it identified the second copy as the new, still-processing source.
+`bun run check` and `bun test` then passed with 66 tests, including the compiled-release Chrome smoke.
+One earlier full run of `tests/browser.test.ts` had a single 30-second test timeout that did not recur in eight later runs.

@@ -219,18 +219,18 @@ To add or refresh a specific account:
 aba gnb auth login --account you@example.com
 ```
 
-Google can reject sign-in in a software-controlled browser.
-Use system Chrome when that happens:
+Google can reject sign-in in a software-controlled browser, so login uses native system Chrome by default.
+The CLI launches system Chrome with an isolated account profile and waits for an authenticated Gemini Notebook dashboard.
+The signed-out `/trynow` landing page does not count as signed in.
+Playwright attaches over CDP through Bun's native WebSocket transport, saves the authenticated state, and lets the launcher close the isolated browser.
+Notebook commands reopen that same profile through Playwright with the native credential store, so `--headless` runs without a visible window.
+It does not ask for cookies, passwords, or browser-session data.
+
+To sign in through a Playwright-controlled window instead:
 
 ```bash
-aba gnb auth login --account you@example.com --system-browser
+aba gnb auth login --account you@example.com --playwright
 ```
-
-The CLI launches native system Chrome with an isolated account profile and waits for the Gemini Notebook home page.
-Playwright attaches over CDP through Bun's native WebSocket transport, saves the authenticated state, and lets the launcher close the isolated browser.
-Notebook commands reuse that same isolated profile.
-Accounts marked for native browser operation keep the native Chrome/CDP path; other accounts use Playwright's persistent context.
-It does not ask for cookies, passwords, or browser-session data.
 
 List accounts and select the default account:
 
@@ -354,12 +354,14 @@ Use `--json` for machine-readable output.
 
 ## Gemini Notebook authentication behavior
 
-Login runs in headed mode because Google may require manual account selection, passkeys, or two-factor authentication.
-Pass `--system-browser` to use native system Chrome login when Google rejects the Playwright-controlled window.
+Login runs in a visible window because Google may require manual account selection, passkeys, or two-factor authentication.
+It uses native system Chrome unless you pass `--playwright`.
+`--system-browser` remains accepted for compatibility.
 Both login flows use the account's isolated profile, not your regular Chrome profile.
 Notebook commands reopen that persistent profile through Playwright and run headless by default.
 Use the app's `config.json` or an explicit `--headed` or `--headless` flag to choose the browser mode.
 A populated profile supplies authentication directly.
+Commands that reach the signed-out landing page fail with an authentication error instead of returning an empty notebook list.
 Only a fresh profile imports `state.json` before navigation.
 `auth login` and successful `raw` operations write `state.json`; normal browser operations can update the persistent profile.
 
