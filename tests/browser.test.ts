@@ -1,13 +1,13 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { hostname, tmpdir } from "node:os";
 import { PlaywrightBrowser } from "../src/browser/playwright.ts";
 import { compileRaw, runRaw } from "../src/raw.ts";
 import { AccountRegistry, getProfileCredentialStore, type Account } from "../src/registry.ts";
 import { getAppPaths } from "../src/config.ts";
 import { startSystemBrowser } from "../src/apps/system-browser.ts";
-import { listNotebooksScript, markConfirmNotebookRemovalScript, readChatStateScript } from "../src/apps/gnb/browser-scripts.ts";
+import { listNotebooksScript, markConfirmNotebookRemovalScript, readChatStateScript, readSourcesScript } from "../src/apps/gnb/browser-scripts.ts";
 import { readAuthStateScript as readXAuthStateScript } from "../src/apps/x/browser-scripts.ts";
 
 const homes: string[] = [];
@@ -236,6 +236,20 @@ describe("Playwright browser engine with real Chrome", () => {
     expect(await dashboard()).toEqual({ loginRequired: false, ready: false, notebooks: [] });
   }, 30_000);
 
+  test("reads a source list whose only source failed and whose cover is hidden", async () => {
+    const browser = session(await account());
+    await browser.open(baseUrl);
+    await browser.eval(`document.body.innerHTML = '<div class="xap-uploader-dropzone sources-list-dropzone"><span class="source-empty-state-header">Drop files here</span></div>'`);
+    const sources = () => browser.eval<{ loaded: boolean; expectedSourceCount: number | null; sources: unknown[] }>(readSourcesScript);
+    expect(await sources()).toEqual({ loaded: false, expectedSourceCount: null, sources: [] });
+    await browser.eval(`document.querySelector('.sources-list-dropzone').classList.add('has-sources'); document.querySelector('.sources-list-dropzone').insertAdjacentHTML('beforeend', '<div class="single-source-container single-source-error-container"><button class="source-stretched-button" aria-label="failed.m4a"></button><div class="source-title">failed.m4a</div><button aria-label="More">More</button></div>')`);
+    expect(await sources()).toEqual({
+      loaded: true,
+      expectedSourceCount: 1,
+      sources: [{ id: "source-1", title: "failed.m4a", status: "error", removable: true }],
+    });
+  }, 30_000);
+
   test("uses cross-origin frames for evaluation and real keyboard input", async () => {
     const browser = session(await account());
     await browser.open(`${baseUrl}/frames`);
@@ -294,6 +308,23 @@ describe("Playwright browser engine with real Chrome", () => {
     expect(getProfileCredentialStore({ ...value, useSystemBrowser: true, credentialStore: "playwright" })).toBe("playwright");
     expect(() => getProfileCredentialStore({ ...value, credentialStore: "invalid" } as unknown as Account)).toThrow("credential-store metadata is invalid");
   });
+
+  test("reopens a profile whose lock was left by a Chrome process that no longer runs", async () => {
+    const value = await account();
+    await mkdir(value.profileDir);
+    const exited = Bun.spawn(["true"]);
+    await exited.exited;
+    await symlink(`${hostname()}-${exited.pid}`, join(value.profileDir, "SingletonLock"));
+    const browser = session(value);
+    try {
+      await browser.open(baseUrl);
+      expect(await browser.currentUrl()).toStartWith(baseUrl);
+    } finally {
+      await browser.close();
+    }
+    await symlink(`${hostname()}-${process.pid}`, join(value.profileDir, "SingletonLock"));
+    await expect(session(value).open(baseUrl)).rejects.toThrow("profile is already open");
+  }, 30_000);
 
   test("rejects locked profiles, invalid channels, and malformed storage without exposing secrets", async () => {
     const value = await account();

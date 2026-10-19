@@ -188,7 +188,7 @@ function usage(): string {
 
 Usage:
   agent-browser-app <gnb|x|reddit> raw [<code> | --file <script.js>] [--account <id>] [--url <url>] [--timeout <seconds>] [--headed | --headless] [--json]
-  agent-browser-app gnb auth login [--account <email>] [--timeout <seconds>] [--system-browser]
+  agent-browser-app gnb auth login [--account <email>] [--timeout <seconds>] [--playwright]
   agent-browser-app gnb auth list [--json]
   agent-browser-app gnb auth switch <email-or-id>
   agent-browser-app gnb notebook list [--account <email-or-id>] [--headed] [--json]
@@ -298,15 +298,19 @@ async function handleGnbAuth(
   if (command === "login") {
     assertAllowedOptions(
       options,
-      new Set(["account", "system-browser", "timeout"]),
+      new Set(["account", "playwright", "system-browser", "timeout"]),
     );
     if (options.positionals.length > 0) {
       throw new CliError("gnb auth login does not accept positional arguments.", 2);
     }
+    if (hasFlag(options, "playwright") && hasFlag(options, "system-browser")) {
+      throw new CliError("Gemini Notebook login accepts only one of --playwright or --system-browser.", 2);
+    }
     const requestedAccount = stringOption(options, "account");
     const account = await registry.accountForLogin(requestedAccount);
     const timeoutSeconds = numberOption(options, "timeout", 600);
-    const systemBrowser = hasFlag(options, "system-browser");
+    // Google can refuse sign-in in a Playwright-controlled window, so native Chrome is the default.
+    const systemBrowser = !hasFlag(options, "playwright");
     console.log(
       `Opening ${systemBrowser ? "system Google Chrome" : "headed Chrome"} for account "${requestedAccount || account.email || account.id}".`,
     );
@@ -324,7 +328,8 @@ async function handleGnbAuth(
     const saved = await registry.saveAuthenticated(
       {
         ...account,
-        useSystemBrowser: systemBrowser || undefined,
+        // Operations always use Playwright. The credential store keeps native profiles readable.
+        useSystemBrowser: undefined,
         credentialStore: systemBrowser ? "native" : getProfileCredentialStore(account),
       },
       detectedEmail,

@@ -139,7 +139,7 @@ describe("agent-browser-app CLI with legacy test adapter", () => {
   test("runs raw code for every application and alias with selected profiles", async () => {
     const home = await createHome();
     for (const app of ["gnb", "x", "reddit"]) {
-      const login = await runCli([app, "auth", "login", "--timeout", "2", ...(app === "reddit" ? ["--playwright"] : [])], home);
+      const login = await runCli([app, "auth", "login", "--timeout", "2", ...(app === "x" ? [] : ["--playwright"])], home);
       expect(login.exitCode).toBe(0);
     }
     for (const app of ["gnb", "gemini-notebook", "notebooklm", "x", "twitter", "reddit"]) {
@@ -874,7 +874,7 @@ describe("agent-browser-app CLI with legacy test adapter", () => {
 
   test("does not save a NotebookLM landing page as a successful login", async () => {
     const home = await createHome();
-    const result = await runCli(["gnb", "auth", "login", "--timeout", "0.1"], home, {
+    const result = await runCli(["gnb", "auth", "login", "--playwright", "--timeout", "0.1"], home, {
       FAKE_GNB_URL: "https://notebook.google.com/trynow?private-marker=1",
     });
     expect(result.exitCode).toBe(1);
@@ -890,7 +890,7 @@ describe("agent-browser-app CLI with legacy test adapter", () => {
 
   test("retries dashboard evaluation interrupted by OAuth navigation", async () => {
     const home = await createHome();
-    const result = await runCli(["gnb", "auth", "login", "--timeout", "2"], home, {
+    const result = await runCli(["gnb", "auth", "login", "--playwright", "--timeout", "2"], home, {
       FAKE_GNB_NAVIGATING: "true",
     });
     expect(result.exitCode).toBe(0);
@@ -915,9 +915,42 @@ describe("agent-browser-app CLI with legacy test adapter", () => {
     expect(switches).not.toContain("t-signin");
   });
 
+  test("signs in with native Chrome by default and then runs notebook commands headless", async () => {
+    const home = await createHome();
+    const systemBrowserLog = join(home, "fake-system-browser.jsonl");
+    const environment = {
+      AGENT_BROWSER_APP_SYSTEM_BROWSER_BIN: fakeSystemBrowser,
+      FAKE_SYSTEM_BROWSER_LOG: systemBrowserLog,
+      FAKE_SYSTEM_BROWSER_DONE: join(home, "fake-system-browser.done"),
+    };
+    const login = await runCli(["gnb", "auth", "login", "--timeout", "2"], home, environment);
+    expect(login.exitCode).toBe(0);
+    expect(login.stdout).toContain("Opening system Google Chrome");
+    const account = JSON.parse((await runCli(["gnb", "auth", "list", "--json"], home)).stdout).accounts[0];
+    expect(account.credentialStore).toBe("native");
+    expect(account.useSystemBrowser).toBeUndefined();
+    const launchesAfterLogin = (await readFile(systemBrowserLog, "utf8")).trim().split("\n").length;
+
+    const list = await runCli(["gnb", "notebook", "list", "--headless", "--json"], home, environment);
+    expect(list.exitCode).toBe(0);
+    expect(JSON.parse(list.stdout).notebooks[0].title).toBe("Test Notebook");
+    expect((await readFile(systemBrowserLog, "utf8")).trim().split("\n")).toHaveLength(launchesAfterLogin);
+    const invocations = (await readFile(join(home, "fake-invocations.jsonl"), "utf8"))
+      .trim().split("\n").map((line) => JSON.parse(line) as string[]);
+    const listOpen = invocations.filter((args) => args.includes("open") && args.includes("--profile")).at(-1);
+    expect(listOpen?.[listOpen.indexOf("--headed") + 1]).toBe("false");
+  });
+
+  test("rejects conflicting Gemini Notebook login modes", async () => {
+    const home = await createHome();
+    const result = await runCli(["gnb", "auth", "login", "--playwright", "--system-browser"], home);
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("only one of --playwright or --system-browser");
+  });
+
   test("requires a ready dashboard before saving login even at an app URL", async () => {
     const home = await createHome();
-    const result = await runCli(["gnb", "auth", "login", "--timeout", "0.1"], home, {
+    const result = await runCli(["gnb", "auth", "login", "--playwright", "--timeout", "0.1"], home, {
       FAKE_GNB_READY: "false",
     });
     expect(result.exitCode).toBe(1);
@@ -928,7 +961,7 @@ describe("agent-browser-app CLI with legacy test adapter", () => {
   test("accepts an authenticated empty NotebookLM dashboard", async () => {
     const home = await createHome();
     const environment = { FAKE_GNB_EMPTY: "true" };
-    const login = await runCli(["gnb", "auth", "login", "--timeout", "2"], home, environment);
+    const login = await runCli(["gnb", "auth", "login", "--playwright", "--timeout", "2"], home, environment);
     expect(login.exitCode).toBe(0);
     const list = await runCli(["gnb", "notebook", "list", "--json"], home, environment);
     expect(list.exitCode).toBe(0);
@@ -938,7 +971,7 @@ describe("agent-browser-app CLI with legacy test adapter", () => {
 
   test("rejects unauthenticated landing pages on list, read, and create", async () => {
     const home = await createHome();
-    expect((await runCli(["gnb", "auth", "login", "--timeout", "2"], home)).exitCode).toBe(0);
+    expect((await runCli(["gnb", "auth", "login", "--playwright", "--timeout", "2"], home)).exitCode).toBe(0);
     const registryPath = join(home, "apps/agent-browser-app/gnb/accounts.json");
     const before = await readFile(registryPath, "utf8");
     for (const operation of [["list"], ["read", "abc-123"], ["create"]]) {
@@ -951,7 +984,7 @@ describe("agent-browser-app CLI with legacy test adapter", () => {
       expect(result.stderr).not.toContain("private-marker");
     }
     expect(await readFile(registryPath, "utf8")).toBe(before);
-    const failedLogin = await runCli(["gnb", "auth", "login", "--timeout", "0.1"], home, {
+    const failedLogin = await runCli(["gnb", "auth", "login", "--playwright", "--timeout", "0.1"], home, {
       FAKE_GNB_URL: "https://notebook.google.com/trynow",
     });
     expect(failedLogin.exitCode).toBe(1);
@@ -960,7 +993,7 @@ describe("agent-browser-app CLI with legacy test adapter", () => {
 
   test("does not return an empty list when the dashboard never finishes loading", async () => {
     const home = await createHome();
-    expect((await runCli(["gnb", "auth", "login", "--timeout", "2"], home)).exitCode).toBe(0);
+    expect((await runCli(["gnb", "auth", "login", "--playwright", "--timeout", "2"], home)).exitCode).toBe(0);
     const result = await runCli(["gnb", "notebook", "list", "--json"], home, {
       FAKE_GNB_READY: "false",
     });
@@ -987,7 +1020,7 @@ describe("agent-browser-app CLI with legacy test adapter", () => {
     const home = await createHome();
 
     const loginResult = await runCli(
-      ["gnb", "auth", "login", "--account", "test@example.com", "--timeout", "2"],
+      ["gnb", "auth", "login", "--playwright", "--account", "test@example.com", "--timeout", "2"],
       home,
     );
     expect(loginResult.exitCode).toBe(0);
@@ -1125,7 +1158,7 @@ describe("agent-browser-app CLI with legacy test adapter", () => {
   test("asks Gemini Notebook with only selected sources", async () => {
     const home = await createHome();
     const loginResult = await runCli(
-      ["gnb", "auth", "login", "--timeout", "2"],
+      ["gnb", "auth", "login", "--playwright", "--timeout", "2"],
       home,
     );
     expect(loginResult.exitCode).toBe(0);
@@ -1168,7 +1201,7 @@ describe("agent-browser-app CLI with legacy test adapter", () => {
 
   test("waits for chat history hydration before filling a question", async () => {
     const home = await createHome();
-    expect((await runCli(["gnb", "auth", "login", "--timeout", "2"], home)).exitCode).toBe(0);
+    expect((await runCli(["gnb", "auth", "login", "--playwright", "--timeout", "2"], home)).exitCode).toBe(0);
     const result = await runCli(["gnb", "ask", "question", "--id", "abc-123", "--timeout", "8", "--json"], home, {
       FAKE_CHAT_LOADING_POLLS: "6",
     });
@@ -1195,7 +1228,7 @@ describe("agent-browser-app CLI with legacy test adapter", () => {
   test("validates and removes multiple notebooks by ID", async () => {
     const home = await createHome();
     const loginResult = await runCli(
-      ["gnb", "auth", "login", "--timeout", "2"],
+      ["gnb", "auth", "login", "--playwright", "--timeout", "2"],
       home,
     );
     expect(loginResult.exitCode).toBe(0);
@@ -1277,7 +1310,7 @@ describe("agent-browser-app CLI with legacy test adapter", () => {
   test("lists and removes multiple notebook sources", async () => {
     const home = await createHome();
     const loginResult = await runCli(
-      ["gnb", "auth", "login", "--timeout", "2"],
+      ["gnb", "auth", "login", "--playwright", "--timeout", "2"],
       home,
     );
     expect(loginResult.exitCode).toBe(0);
@@ -1374,7 +1407,7 @@ describe("agent-browser-app CLI with legacy test adapter", () => {
   test("adds copied text and multiple URL sources", async () => {
     const home = await createHome();
     const loginResult = await runCli(
-      ["gnb", "auth", "login", "--timeout", "2"],
+      ["gnb", "auth", "login", "--playwright", "--timeout", "2"],
       home,
     );
     expect(loginResult.exitCode).toBe(0);
@@ -1562,7 +1595,7 @@ describe("agent-browser-app CLI with legacy test adapter", () => {
 
     try {
       const loginResult = await runCli(
-        ["gnb", "auth", "login", "--timeout", "2"],
+        ["gnb", "auth", "login", "--playwright", "--timeout", "2"],
         home,
       );
       expect(loginResult.exitCode).toBe(0);
