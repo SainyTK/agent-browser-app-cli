@@ -1,11 +1,11 @@
 import { existsSync } from "node:fs";
-import { lstat } from "node:fs/promises";
 import { createServer } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { CliError } from "../errors.ts";
 import type { Account } from "../registry.ts";
 import { chromium } from "playwright";
+import { isProfileInUse } from "../browser/profile-lock.ts";
 import { connectLocalChromeTransport } from "../browser/transport.ts";
 
 export interface SystemBrowserApp {
@@ -104,28 +104,12 @@ function browserCommand(
   );
 }
 
-async function profileIsLocked(account: Account): Promise<boolean> {
-  try {
-    await lstat(join(account.profileDir, "SingletonLock"));
-    return true;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return false;
-    }
-    throw new CliError(
-      `Could not inspect the isolated Chrome profile lock. ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
-  }
-}
-
 async function waitForProfileRelease(
   account: Account,
   timeoutMs = 10_000,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
-  while (await profileIsLocked(account)) {
+  while (await isProfileInUse(account.profileDir)) {
     if (Date.now() >= deadline) {
       throw new CliError(
         "System Google Chrome is still using the isolated profile. Quit that isolated Chrome instance with Command-Q, then rerun the command.",
@@ -180,7 +164,7 @@ export async function startSystemBrowser(
   environment: NodeJS.ProcessEnv = process.env,
   onStarted: () => void = () => undefined,
 ): Promise<SystemBrowserSession> {
-  if (await profileIsLocked(account)) {
+  if (await isProfileInUse(account.profileDir)) {
     throw new CliError(
       "The isolated Chrome profile is already open. Quit that isolated Chrome instance with Command-Q, then rerun the command.",
     );

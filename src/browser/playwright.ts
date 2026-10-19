@@ -1,10 +1,11 @@
-import { access, chmod, lstat, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import { chromium, type Browser, type BrowserContext, type Frame, type Page } from "playwright";
 import { CliError } from "../errors.ts";
 import { getProfileCredentialStore, type Account } from "../registry.ts";
 import type { BrowserSession, BrowserTab, PlaywrightOperation } from "./types.ts";
+import { isProfileInUse } from "./profile-lock.ts";
 import { connectLocalChromeTransport } from "./transport.ts";
 
 const ACTION_TIMEOUT = 30_000;
@@ -76,14 +77,8 @@ export class PlaywrightBrowser implements BrowserSession {
     if (channel !== "chrome" && channel !== "chromium") {
       throw new CliError("AGENT_BROWSER_APP_BROWSER_CHANNEL must be chrome or chromium.", 2);
     }
-    try {
-      await lstat(join(this.account.profileDir, "SingletonLock"));
+    if (await isProfileInUse(this.account.profileDir)) {
       throw new CliError("The isolated browser profile is already open. Close that browser and retry.");
-    } catch (error) {
-      if (error instanceof CliError) throw error;
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-        throw new CliError("Could not inspect the isolated browser profile lock.");
-      }
     }
     // A real Chrome profile is authoritative. Import legacy storage only into a fresh profile.
     const hasProfile = await exists(join(this.account.profileDir, "Default", "Preferences"));
