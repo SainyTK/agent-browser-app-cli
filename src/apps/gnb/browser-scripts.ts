@@ -646,69 +646,6 @@ export const insertDrivePickerSelectionScript = String.raw`
 })()
 `;
 
-export function readUploadStatusScript(
-  fileName: string,
-  baselineMatchingCount = 0,
-): string {
-  return String.raw`
-/* aba:upload-status */
-(() => {
-  const expected = ${JSON.stringify(fileName)}.trim().toLowerCase();
-  const baselineMatchingCount = ${baselineMatchingCount};
-  const sourceItems = Array.from(
-    document.querySelectorAll(".single-source-container, source-item")
-  );
-  const sourceName = (element) =>
-    (
-      element.querySelector(".source-title")?.textContent ||
-      element.querySelector(".source-stretched-button")?.getAttribute("aria-label") ||
-      ""
-    ).trim();
-  const matchingItems = sourceItems.filter((element) =>
-    sourceName(element).toLowerCase() === expected
-  );
-  const newMatchingItems = matchingItems.slice(baselineMatchingCount);
-  const matchingItem = newMatchingItems.at(-1) || null;
-  const processing = Boolean(
-    matchingItem?.matches(".shimmer") ||
-    matchingItem?.querySelector(
-      '.loading-spinner-container, [role="progressbar"]'
-    ) ||
-    matchingItem?.querySelector('button[aria-label="More"][disabled]')
-  );
-  const failed = Boolean(
-    matchingItem?.matches(
-      ".single-source-error-container, [class*=error]"
-    ) ||
-    matchingItem?.querySelector('[aria-label*="error" i]')
-  );
-  const sourceCountText =
-    document.querySelector(".cover-subtitle-source-count")?.textContent || "";
-  const sourceCountMatch = sourceCountText.match(/\b(\d+)\s+sources?\b/i);
-  const expectedSourceCount = sourceCountMatch
-    ? Number(sourceCountMatch[1])
-    : null;
-  return {
-    loaded:
-      expectedSourceCount !== null &&
-      sourceItems.length >= expectedSourceCount,
-    sourceCount: sourceItems.length,
-    expectedSourceCount,
-    matchingCount: matchingItems.length,
-    newItemPresent: Boolean(matchingItem),
-    ready: Boolean(matchingItem) && !processing && !failed,
-    dialogOpen: Boolean(
-      document.querySelector(
-        'mat-dialog-container [xapscottyuploadertrigger], [role="dialog"] [xapscottyuploadertrigger]'
-      )
-    ),
-    processing,
-    error: failed ? "NotebookLM marked the new source as failed." : null
-  };
-})()
-`;
-}
-
 export const readChatStateScript = String.raw`
 /* aba:chat-state */
 (() => {
@@ -814,11 +751,18 @@ export const readSourcesScript = String.raw`
   const sourceCountText =
     document.querySelector(".cover-subtitle-source-count")?.textContent || "";
   const sourceCountMatch = sourceCountText.match(/\b(\d+)\s+sources?\b/i);
+  // NotebookLM hides the cover, and its count, when no source is usable.
+  // The source drop zone still marks a rendered, non-empty list.
+  const listedSources = Boolean(
+    document.querySelector(".sources-list-dropzone.has-sources")
+  );
   const expectedSourceCount = sourceCountMatch
     ? Number(sourceCountMatch[1])
     : emptyState
       ? 0
-      : null;
+      : listedSources && items.length > 0
+        ? items.length
+        : null;
   const sources = items.map((item, index) => {
     const title = (
       item.querySelector(".source-title")?.textContent ||

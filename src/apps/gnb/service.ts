@@ -9,6 +9,7 @@ import { CliError } from "../../errors.ts";
 import type { Account } from "../../registry.ts";
 import { startSystemBrowser } from "../system-browser.ts";
 import { isNotebookAppUrl } from "./auth.ts";
+import { addedSourcesSince } from "./source-diff.ts";
 import {
   detectAccountEmailScript,
   insertDrivePickerSelectionScript,
@@ -33,7 +34,6 @@ import {
   readDrivePickerStateScript,
   readNotebookScript,
   readSourcesScript,
-  readUploadStatusScript,
   selectDrivePickerItemScript,
   setSelectedSourcesScript,
 } from "./browser-scripts.ts";
@@ -214,14 +214,8 @@ async function runAuthenticated<T>(
   operation: (browser: BrowserSession) => Promise<T>,
 ): Promise<T> {
   await requireState(account);
-  if (account.useSystemBrowser) {
-    const session = await startAuthenticatedSystemBrowser(account, 30);
-    try {
-      return await operation(session.browser);
-    } finally {
-      await session.close();
-    }
-  }
+  // System Chrome is only for sign-in. Operations reuse its profile through
+  // Playwright with the recorded credential store, so --headless stays headless.
   const browser = createBrowser(account);
   try {
     return await operation(browser);
@@ -797,48 +791,25 @@ export async function uploadNotebookFiles(
       );
     }
     const initial = await loadSources(browser);
-    const baselineCounts = new Map<string, number>();
-    for (const source of initial.sources) {
-      const normalizedTitle = source.title.toLowerCase();
-      baselineCounts.set(
-        normalizedTitle,
-        (baselineCounts.get(normalizedTitle) || 0) + 1,
-      );
-    }
     await browser.uploadFilesThroughFileChooser(
       '[data-agent-browser-app-target="upload"]',
       files.map((file) => file.file),
     );
 
-    interface UploadStatus {
-      newItemPresent: boolean;
-      ready: boolean;
-      dialogOpen: boolean;
-      processing: boolean;
-      error: string | null;
-      matchingCount: number;
-    }
     const deadline = Date.now() + timeoutSeconds * 1000;
-    let statuses: UploadStatus[] = [];
+    let added: SourceSummary[] = [];
+    const addedFor = (title: string) =>
+      added.find((source) => source.title.trim().toLowerCase() === title.toLowerCase());
     while (Date.now() < deadline) {
-      statuses = [];
-      for (const file of files) {
-        statuses.push(
-          await browser.eval<UploadStatus>(
-            readUploadStatusScript(
-              file.title,
-              baselineCounts.get(file.title.toLowerCase()) || 0,
-            ),
-          ),
-        );
-      }
-      const failedIndex = statuses.findIndex((status) => status.error);
-      if (failedIndex >= 0) {
+      const state = await browser.eval<SourceListState>(readSourcesScript);
+      added = addedSourcesSince(initial.sources, state.sources);
+      const failed = files.find((file) => addedFor(file.title)?.status === "error");
+      if (failed) {
         throw new CliError(
-          `Gemini Notebook upload failed for "${files[failedIndex].title}": ${statuses[failedIndex].error}`,
+          `Gemini Notebook upload failed for "${failed.title}": NotebookLM marked the new source as failed.`,
         );
       }
-      if (statuses.every((status) => status.ready)) {
+      if (files.every((file) => addedFor(file.title)?.status === "ready")) {
         return {
           files: files.map((file) => ({
             file: file.file,
@@ -849,17 +820,13 @@ export async function uploadNotebookFiles(
       }
       await delay(1000);
     }
-    const missing = files.filter(
-      (_file, index) => !statuses[index]?.newItemPresent,
-    );
+    const missing = files.filter((file) => !addedFor(file.title));
     if (missing.length > 0) {
       throw new CliError(
         `Gemini Notebook did not accept ${missing.map((file) => `"${file.title}"`).join(", ")} within ${timeoutSeconds} seconds.`,
       );
     }
-    const processing = files.filter(
-      (_file, index) => !statuses[index]?.ready,
-    );
+    const processing = files.filter((file) => addedFor(file.title)?.status !== "ready");
     throw new CliError(
       `Gemini Notebook did not finish processing ${processing.map((file) => `"${file.title}"`).join(", ")} within ${timeoutSeconds} seconds.`,
     );
@@ -908,26 +875,6 @@ interface AddedSourcesResult {
   notebookId: string;
   url: string;
   sources: SourceSummary[];
-}
-
-function addedSourcesSince(
-  baseline: SourceSummary[],
-  current: SourceSummary[],
-): SourceSummary[] {
-  const baselineCounts = new Map<string, number>();
-  for (const source of baseline) {
-    const title = source.title.trim().toLowerCase();
-    baselineCounts.set(title, (baselineCounts.get(title) || 0) + 1);
-  }
-  return current.filter((source) => {
-    const title = source.title.trim().toLowerCase();
-    const remaining = baselineCounts.get(title) || 0;
-    if (remaining > 0) {
-      baselineCounts.set(title, remaining - 1);
-      return false;
-    }
-    return true;
-  });
 }
 
 async function waitForAddedSources(
